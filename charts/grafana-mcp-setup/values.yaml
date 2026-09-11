@@ -32,10 +32,13 @@ grafana:
 oidc:
   issuer: https://idp.example.com
   clientID: grafana-mcp-setup
-  # Membership of this group is the authorisation. Leave it empty only when
-  # everyone who can sign in may hold a Grafana token — signing in proves
-  # nothing on its own.
-  requiredGroup: ""
+  # Membership of any of these groups is the authorisation. Several, because an
+  # application's roles are usually separate groups rather than nested ones.
+  #
+  # Leave it empty only when everyone who can sign in may hold a Grafana token.
+  # Note that the proxy in front authenticates against the identity provider,
+  # not against Grafana, so Grafana's own group rules do not apply here.
+  requiredGroups: []
   # Must match the cookie the proxy leaves the ID token in.
   idTokenCookie: mcp_id_token
 
@@ -69,7 +72,7 @@ httpRoute:
 
 # Envoy Gateway's OIDC filter, attached to the route above so that only this
 # path asks for a login. Requesting the groups scope is not optional when
-# oidc.requiredGroup is set: without it the provider omits the claim and every
+# oidc.requiredGroups is set: without it the provider omits the claim and every
 # request looks like a permissions failure.
 securityPolicy:
   enabled: false

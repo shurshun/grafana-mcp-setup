@@ -52,8 +52,8 @@ spec:
               value: {{ .Values.oidc.issuer | quote }}
             - name: OIDC_CLIENT_ID
               value: {{ .Values.oidc.clientID | quote }}
-            - name: REQUIRED_GROUP
-              value: {{ .Values.oidc.requiredGroup | quote }}
+            - name: REQUIRED_GROUPS
+              value: {{ join "," .Values.oidc.requiredGroups | quote }}
             - name: ID_TOKEN_COOKIE
               value: {{ .Values.oidc.idTokenCookie | quote }}
             - name: TOKEN_TTL_DAYS

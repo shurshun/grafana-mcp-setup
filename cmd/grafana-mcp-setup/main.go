@@ -41,7 +41,7 @@ func main() {
 		"addr", cfg.Addr,
 		"path", cfg.BasePath,
 		"grafana", cfg.GrafanaURL,
-		"group", cfg.RequiredGroup,
+		"groups", cfg.RequiredGroups,
 		"ttl", cfg.TokenTTL,
 	)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

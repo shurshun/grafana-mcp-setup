@@ -13,4 +13,5 @@ grafana:
 
 oidc:
   issuer: https://idp.example.com
-  requiredGroup: /grafana-mcp
+  requiredGroups:
+    - /grafana-mcp

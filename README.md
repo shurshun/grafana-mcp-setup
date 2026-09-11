@@ -44,10 +44,15 @@ rather than to the gateway.
 
 ## Authorisation
 
-Signing in is authentication, not permission. If everyone in your directory can
-sign in, then without `oidc.requiredGroup` everyone can issue themselves a
-Grafana token. Set the group, and the identity provider decides who may hold
-one.
+Signing in is authentication, not permission. The proxy in front authenticates
+against the identity provider, not against Grafana, so Grafana's own rules —
+`role_attribute_strict` and the rest — have no say over who reaches this page.
+Without `oidc.requiredGroups`, anyone your provider lets in can issue themselves
+a token, including people Grafana would refuse at its own login.
+
+List the groups that may hold one and the provider decides. Any one of them is
+enough, because an application's roles are usually separate groups: viewers in
+one, admins in another, neither nested in the other.
 
 The group has to reach the service in the `groups` claim, which means the proxy
 must request the `groups` scope. Forget it and the claim is absent, every request
@@ -106,7 +111,7 @@ helm install grafana-mcp-setup oci://ghcr.io/shurshun/charts/grafana-mcp-setup \
   --set grafana.publicURL=https://grafana.example.com \
   --set grafana.adminToken=glsa_… \
   --set oidc.issuer=https://idp.example.com \
-  --set oidc.requiredGroup=/grafana-mcp
+  --set oidc.requiredGroups={/grafana-mcp}
 ```
 
 Two things have to exist first:
@@ -116,7 +121,7 @@ Two things have to exist first:
    creating service accounts requires it.
 2. **An OIDC client** whose redirect URI is
    `https://grafana.example.com/setup-mcp/oauth2/callback`, emitting the
-   `groups` claim if you use `oidc.requiredGroup`.
+   `groups` claim if you use `oidc.requiredGroups`.
 
 Then route to it. With Envoy Gateway the chart can render both objects:
 
@@ -150,7 +155,7 @@ Everything comes from the environment; the chart sets it all.
 | `GRAFANA_ADMIN_TOKEN` | — | This service's own token |
 | `OIDC_ISSUER` | — | Issuer whose JWKS verifies the ID token |
 | `OIDC_CLIENT_ID` | `grafana-mcp-setup` | Expected `aud` |
-| `REQUIRED_GROUP` | empty | Group that may hold a token; empty means anyone who can sign in |
+| `REQUIRED_GROUPS` | empty | Comma-separated groups; holding any one allows a token, empty allows anyone who can sign in |
 | `ID_TOKEN_COOKIE` | `mcp_id_token` | Cookie the proxy leaves the ID token in |
 | `BASE_PATH` | `/setup-mcp` | Where the service is mounted |
 | `TOKEN_TTL_DAYS` | `90` | Lifetime of an issued token |
