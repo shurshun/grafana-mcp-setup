@@ -2,7 +2,9 @@
 
 Self-service Grafana tokens for MCP clients. Someone opens a page, signs in with
 your existing identity provider, and gets a personal read-only token plus the
-`.mcp.json` block to paste into their client. No administrator in the loop.
+config block to paste into their client — Claude Code, Claude Desktop, Codex,
+Cursor, VS Code or Zed, each in the shape and the file that client actually
+reads. No administrator in the loop.
 
 ![The page after a token is issued](images/token.png)
 
@@ -69,6 +71,14 @@ is refused, and it looks like a permissions problem rather than a missing scope.
 - A reissue **rotates**: previous tokens are deleted before the new one is
   created, so nobody accumulates live credentials.
 - Stored nowhere: not in a log, not in a database, not in a URL.
+
+### Clients
+
+The snippet comes in six flavours because the clients disagree about all three
+of file, key and syntax: most read `mcpServers`, VS Code calls the same map
+`servers` and wants a `type`, Zed wraps the command in an object of its own, and
+Codex keeps TOML rather than JSON. Pick a tab and the block is ready to paste;
+the choice is remembered for the next visit.
 
 ### Three states
 

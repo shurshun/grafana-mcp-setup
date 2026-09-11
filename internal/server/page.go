@@ -24,6 +24,7 @@ const (
 type pageData struct {
 	Email     string
 	BasePath  string
+	Formats   []mcpFormat
 	State     string
 	Token     string
 	Mask      string
@@ -158,7 +159,41 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
   .callout svg { flex: none; margin-top: .15rem; }
   .callout p { margin: 0; }
 
-  .snippet { border: 1px solid var(--code-line); border-radius: 10px; overflow: hidden; }
+  /* Tabs -------------------------------------------------------------- */
+
+  .tabs {
+    display: flex; flex-wrap: wrap; gap: .4rem;
+    margin-bottom: .75rem;
+  }
+  .tab {
+    display: inline-flex; align-items: center; gap: .45rem;
+    padding: .4rem .75rem; font-size: .85rem;
+    border: 1px solid var(--line); border-radius: 8px;
+    background: var(--card); color: var(--muted);
+  }
+  .tab svg { color: var(--client, var(--muted)); opacity: .85; }
+  .tab:hover { color: var(--ink); }
+  .tab.on {
+    color: var(--ink);
+    border-color: color-mix(in srgb, var(--client, var(--accent)) 55%, transparent);
+    background: color-mix(in srgb, var(--client, var(--accent)) 12%, var(--card));
+  }
+  .tab.on svg { opacity: 1; }
+
+  /* One colour per client, so the tab and the block it opens agree. */
+  [data-format="claude-code"]    { --client: #d97757; }
+  [data-format="claude-desktop"] { --client: #d97757; }
+  [data-format="codex"]          { --client: #10a37f; }
+  [data-format="cursor"]         { --client: #7c8797; }
+  [data-format="vscode"]         { --client: #3b82f6; }
+  [data-format="zed"]            { --client: #8b5cf6; }
+
+  .note { margin: .7rem 0 0; color: var(--muted); font-size: .85rem; }
+
+  .snippet {
+    border: 1px solid var(--code-line); border-radius: 10px; overflow: hidden;
+    border-top: 2px solid color-mix(in srgb, var(--client, var(--accent)) 70%, transparent);
+  }
   .snippet-bar {
     display: flex; align-items: center; gap: .75rem;
     background: color-mix(in srgb, var(--code-bg) 92%, #fff);
@@ -177,7 +212,13 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
     font-size: .85rem; line-height: 1.55;
     overflow-x: auto;
   }
-  #token { color: var(--accent); letter-spacing: .04em; }
+  /* Syntax ------------------------------------------------------------ */
+
+  pre .k   { color: #7dd3fc; }  /* keys */
+  pre .s   { color: #b6e08a; }  /* strings */
+  pre .n   { color: #f3b27a; }  /* numbers */
+  pre .t   { color: #d6a2f0; }  /* TOML tables */
+  pre .tok { color: var(--accent); letter-spacing: .04em; }
 
   button {
     font: inherit; cursor: pointer; border-radius: 8px;
@@ -372,56 +413,89 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
 </div>
 
 {{ define "snippet" }}
-  <div class="snippet">
-    <div class="snippet-bar">
-      <span class="filename">.mcp.json</span>
-      <button type="button" class="copy" id="copy"{{ if .Token }} data-token="{{ .Token }}"{{ end }}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <rect x="9" y="9" width="11" height="11" rx="2.5" stroke="currentColor" stroke-width="1.8"/>
-          <path d="M5.5 15H5a1.5 1.5 0 01-1.5-1.5V5A1.5 1.5 0 015 3.5h8.5A1.5 1.5 0 0115 5v.5"
-                stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-        </svg>
-        <span class="label">Copy</span>
+<div class="clients"{{ with .Token }} data-token="{{ . }}"{{ end }}>
+  <div class="tabs" role="tablist" aria-label="Client">
+    {{ range $i, $f := .Formats }}
+      <button type="button" class="tab{{ if eq $i 0 }} on{{ end }}" data-format="{{ $f.ID }}"
+              role="tab" aria-selected="{{ if eq $i 0 }}true{{ else }}false{{ end }}">
+        {{ $f.Icon }}<span>{{ $f.Name }}</span>
       </button>
-    </div>
-    <pre id="snippet">{
-  "mcpServers": {
-    "grafana": {
-      "command": "mcp-grafana",
-      "args": ["-t", "stdio", "--disable-write"],
-      "env": {
-        "GRAFANA_URL": "{{ .PublicURL }}",
-        "GRAFANA_SERVICE_ACCOUNT_TOKEN": "<span id="token">{{ .Mask }}</span>"
-      }
-    }
-  }
-}</pre>
+    {{ end }}
   </div>
 
-  <script>
-    const copy = document.getElementById("copy");
-    const snippet = document.getElementById("snippet");
-    const masked = document.getElementById("token");
-    const label = copy.querySelector(".label");
+  {{ range $i, $f := .Formats }}
+    <div class="panel" data-format="{{ $f.ID }}" role="tabpanel"{{ if ne $i 0 }} hidden{{ end }}>
+      <div class="snippet">
+        <div class="snippet-bar">
+          <span class="filename">{{ $f.File }}</span>
+          <button type="button" class="copy">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <rect x="9" y="9" width="11" height="11" rx="2.5" stroke="currentColor" stroke-width="1.8"/>
+              <path d="M5.5 15H5a1.5 1.5 0 01-1.5-1.5V5A1.5 1.5 0 015 3.5h8.5A1.5 1.5 0 0115 5v.5"
+                    stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+            <span class="label">Copy</span>
+          </button>
+        </div>
+        <pre>{{ $f.Body }}</pre>
+      </div>
+      {{ with $f.Note }}<p class="note">{{ . }}</p>{{ end }}
+    </div>
+  {{ end }}
 
-    copy.addEventListener("click", async () => {
-      // Without a token the block is a template and goes to the clipboard as
-      // it stands. A function replacement keeps $-sequences in the token literal.
-      const real = copy.dataset.token
-        ? snippet.textContent.replace(masked.textContent, () => copy.dataset.token)
-        : snippet.textContent;
-      try {
-        await navigator.clipboard.writeText(real);
-        label.textContent = "Copied";
-        copy.classList.add("ok");
-      } catch {
-        // Clipboard access can be refused. Unmask first, or a hand-made
-        // selection copies the asterisks.
-        if (copy.dataset.token) masked.textContent = copy.dataset.token;
-        getSelection().selectAllChildren(snippet);
-        label.textContent = "Press Ctrl/Cmd+C";
-      }
-      setTimeout(() => { label.textContent = "Copy"; copy.classList.remove("ok"); }, 2000);
+</div>
+
+  <script>
+    const clients = document.querySelector(".clients");
+    const token = clients.dataset.token;
+    const tabs = [...document.querySelectorAll(".tab")];
+    const panels = [...document.querySelectorAll(".panel")];
+
+    function show(id) {
+      const known = tabs.some((t) => t.dataset.format === id);
+      if (!known) return;
+      tabs.forEach((t) => {
+        const on = t.dataset.format === id;
+        t.classList.toggle("on", on);
+        t.setAttribute("aria-selected", on);
+      });
+      panels.forEach((p) => { p.hidden = p.dataset.format !== id; });
+      try { localStorage.setItem("mcp-client", id); } catch {}
+    }
+
+    tabs.forEach((t) => t.addEventListener("click", () => show(t.dataset.format)));
+
+    // Remembering the choice is a convenience; a browser that refuses storage
+    // just starts on the first tab.
+    try {
+      const saved = localStorage.getItem("mcp-client");
+      if (saved) show(saved);
+    } catch {}
+
+    document.querySelectorAll(".copy").forEach((copy) => {
+      const panel = copy.closest(".panel");
+      const snippet = panel.querySelector("pre");
+      const masked = panel.querySelector(".tok");
+      const label = copy.querySelector(".label");
+
+      copy.addEventListener("click", async () => {
+        // A function replacement keeps $-sequences in the token literal.
+        const real = token
+          ? snippet.textContent.replace(masked.textContent, () => token)
+          : snippet.textContent;
+        try {
+          await navigator.clipboard.writeText(real);
+          label.textContent = "Copied";
+          copy.classList.add("ok");
+        } catch {
+          // Clipboard access can be refused. Unmask first, or a hand-made
+          // selection copies the asterisks.
+          if (token) masked.textContent = token;
+          getSelection().selectAllChildren(snippet);
+          label.textContent = "Press Ctrl/Cmd+C";
+        }
+        setTimeout(() => { label.textContent = "Copy"; copy.classList.remove("ok"); }, 2000);
+      });
     });
   </script>
 {{ end }}
@@ -435,6 +509,9 @@ func (s *Server) render(w http.ResponseWriter, d pageData) {
 		d.Mask = strings.Repeat("*", maskWidth)
 	case stateActive:
 		d.Mask = "<your token>"
+	}
+	if d.Mask != "" {
+		d.Formats = formats(d.PublicURL, d.Mask)
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// The token must not survive in a shared cache or a proxy.
