@@ -105,6 +105,11 @@ podAnnotations: {}
 podLabels: {}
 podSecurityContext:
   runAsNonRoot: true
+  # Spelled out because the image's USER is the name "nonroot": kubelet cannot
+  # check a non-numeric user against runAsNonRoot and refuses to start the
+  # container. 65532 is that user in the distroless base.
+  runAsUser: 65532
+  runAsGroup: 65532
   seccompProfile:
     type: RuntimeDefault
 securityContext:
