@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "grafana-mcp-setup.fullname" . }}
+  labels:
+    {{- include "grafana-mcp-setup.labels" . | nindent 4 }}
+spec:
+  # Not a knob to turn up: the process holds a freshly issued token in memory
+  # until the redirect fetches it, so a second pod answers that redirect with
+  # "already shown".
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "grafana-mcp-setup.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "grafana-mcp-setup.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "grafana-mcp-setup.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: BASE_PATH
+              value: {{ include "grafana-mcp-setup.basePath" . | quote }}
+            - name: GRAFANA_URL
+              value: {{ .Values.grafana.url | quote }}
+            - name: GRAFANA_PUBLIC_URL
+              value: {{ .Values.grafana.publicURL | quote }}
+            - name: OIDC_ISSUER
+              value: {{ .Values.oidc.issuer | quote }}
+            - name: OIDC_CLIENT_ID
+              value: {{ .Values.oidc.clientID | quote }}
+            - name: REQUIRED_GROUP
+              value: {{ .Values.oidc.requiredGroup | quote }}
+            - name: ID_TOKEN_COOKIE
+              value: {{ .Values.oidc.idTokenCookie | quote }}
+            - name: TOKEN_TTL_DAYS
+              value: {{ .Values.tokenTTLDays | quote }}
+            - name: GRAFANA_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "grafana-mcp-setup.adminTokenSecret" . }}
+                  key: {{ .Values.grafana.existingSecretKey }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

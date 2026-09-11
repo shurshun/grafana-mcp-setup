@@ -1,0 +1,26 @@
+{{ .Chart.Name }} is serving {{ include "grafana-mcp-setup.basePath" . }} on {{ .Values.grafana.publicURL }}.
+
+Before anyone can use it:
+
+1. Grafana needs a service account with the Admin role, and its token in
+   {{ if .Values.grafana.existingSecret }}the secret {{ .Values.grafana.existingSecret }}{{ else }}grafana.adminToken{{ end }}.
+   Admin is not optional — creating service accounts needs it.
+
+2. The identity provider needs a client {{ .Values.oidc.clientID | quote }} whose
+   redirect URI is {{ .Values.grafana.publicURL }}{{ include "grafana-mcp-setup.basePath" . }}/oauth2/callback.
+
+{{- if not .Values.oidc.requiredGroup }}
+
+3. oidc.requiredGroup is empty, so anyone who can sign in to the identity
+   provider can issue themselves a Grafana token. Set it unless that is what
+   you meant.
+{{- else }}
+
+3. The provider must emit the groups claim, and {{ .Values.oidc.requiredGroup }}
+   must contain the people who may hold a token.
+{{- end }}
+
+{{- if not (or .Values.ingress.enabled .Values.httpRoute.enabled) }}
+
+Neither ingress nor httpRoute is enabled, so nothing routes to the service yet.
+{{- end }}

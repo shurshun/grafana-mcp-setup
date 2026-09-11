@@ -1,0 +1,26 @@
+# Self-contained build from source, for local development:
+#   docker build -f Dockerfile.local -t grafana-mcp-setup:dev .
+# The release image (Dockerfile) instead copies a goreleaser-built binary.
+FROM golang:1.24-alpine AS build
+
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+COPY . .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+    -o /out/grafana-mcp-setup ./cmd/grafana-mcp-setup
+
+FROM gcr.io/distroless/static:nonroot
+
+COPY --from=build /out/grafana-mcp-setup /grafana-mcp-setup
+
+USER nonroot:nonroot
+
+EXPOSE 8080
+
+ENTRYPOINT ["/grafana-mcp-setup"]

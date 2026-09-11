@@ -1,0 +1,5 @@
+dist/
+dist-chart/
+coverage.out
+*.tgz
+.DS_Store

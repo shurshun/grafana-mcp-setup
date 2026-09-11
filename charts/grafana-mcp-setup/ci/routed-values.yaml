@@ -1,0 +1,20 @@
+# Everything the cluster does not have CRDs for in the install job is rendered
+# here instead, so the manifests are still validated by the template job.
+image:
+  repository: grafana-mcp-setup
+  tag: ci-test
+  pullPolicy: Never
+
+grafana:
+  url: http://grafana.example.svc
+  publicURL: https://grafana.example.com
+  adminToken: ci-not-a-real-token
+
+oidc:
+  issuer: https://idp.example.com
+  requiredGroup: /grafana-mcp
+
+ingress:
+  enabled: true
+  className: nginx
+  host: grafana.example.com

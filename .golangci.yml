@@ -1,0 +1,17 @@
+version: "2"
+
+linters:
+  enable:
+    - bodyclose
+    - errorlint
+    - gosec
+    - misspell
+    - revive
+    - unconvert
+
+  settings:
+    gosec:
+      excludes:
+        # The page deliberately carries a token to the browser; that is the
+        # whole feature, and G101-style heuristics flag the field names.
+        - G101

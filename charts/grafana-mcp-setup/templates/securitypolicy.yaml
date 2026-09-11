@@ -1,0 +1,32 @@
+{{- if .Values.securityPolicy.enabled }}
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: {{ include "grafana-mcp-setup.fullname" . }}
+  labels:
+    {{- include "grafana-mcp-setup.labels" . | nindent 4 }}
+spec:
+  # Attached to the route, not the gateway: everything else on this hostname,
+  # Grafana's own UI and API included, keeps its own authentication.
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ include "grafana-mcp-setup.fullname" . }}
+  oidc:
+    provider:
+      issuer: {{ .Values.oidc.issuer | quote }}
+    clientID: {{ .Values.oidc.clientID | quote }}
+    clientSecret:
+      name: {{ include "grafana-mcp-setup.clientSecretName" . }}
+    redirectURL: {{ printf "%s%s/oauth2/callback" .Values.grafana.publicURL (include "grafana-mcp-setup.basePath" .) | quote }}
+    logoutPath: {{ printf "%s/logout" (include "grafana-mcp-setup.basePath" .) | quote }}
+    # The groups scope is what carries oidc.requiredGroup. Drop it and the
+    # provider omits the claim, so every request looks like a permissions
+    # failure rather than a missing scope.
+    scopes:
+      {{- toYaml .Values.securityPolicy.scopes | nindent 6 }}
+    cookieNames:
+      idToken: {{ .Values.oidc.idTokenCookie | quote }}
+    cookieConfig:
+      sameSite: {{ .Values.securityPolicy.cookieSameSite | quote }}
+{{- end }}

@@ -1,0 +1,16 @@
+# chart-testing installs with these. The image is the one the workflow builds
+# from source and loads into kind, so this does not depend on a published
+# release existing.
+image:
+  repository: grafana-mcp-setup
+  tag: ci-test
+  pullPolicy: Never
+
+grafana:
+  url: http://grafana.example.svc
+  publicURL: https://grafana.example.com
+  adminToken: ci-not-a-real-token
+
+oidc:
+  issuer: https://idp.example.com
+  requiredGroup: /grafana-mcp
