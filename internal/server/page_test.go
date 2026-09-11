@@ -29,9 +29,9 @@ func TestIssuedPage(t *testing.T) {
 	})
 
 	for _, want := range []string{
-		`id="snippet"`,
-		`id="copy"`,
-		`id="token"`,
+		`class="tabs"`,
+		`class="copy"`,
+		`class="tok"`,
 		"navigator.clipboard.writeText",
 		"https://grafana.example.com",
 		"--disable-write",
@@ -53,17 +53,76 @@ func TestIssuedPageMasksTheToken(t *testing.T) {
 	})
 
 	mask := strings.Repeat("*", maskWidth)
-	if !strings.Contains(body, `<span id="token">`+mask+`</span>`) {
+	if !strings.Contains(body, `<span class="tok">`+mask+`</span>`) {
 		t.Error("the snippet does not show the token as a run of asterisks")
 	}
 	if n := strings.Count(body, "glsa_secret"); n != 1 {
 		t.Errorf("the token appears %d times, want 1 (the data attribute alone)", n)
 	}
 	if !strings.Contains(body, `data-token="glsa_secret"`) {
-		t.Error("the copy button carries no token to copy")
+		t.Error("nothing on the page carries the token for the copy button")
 	}
-	if strings.Contains(snippetOf(t, body), "glsa_secret") {
-		t.Error("the visible snippet leaks the token")
+	for _, snippet := range snippetsOf(t, body) {
+		if strings.Contains(snippet, "glsa_secret") {
+			t.Error("a visible snippet leaks the token")
+		}
+	}
+}
+
+// Every client gets its own block, and the shapes differ: VS Code calls the map
+// servers, Zed wraps the command, Codex writes TOML.
+func TestIssuedPageCoversEveryClient(t *testing.T) {
+	body := render(t, pageData{
+		State:   stateIssued,
+		Email:   "someone@example.com",
+		Token:   "glsa_secret",
+		TTLDays: 90,
+	})
+
+	for _, want := range []string{
+		`data-format="claude-code"`,
+		`data-format="claude-desktop"`,
+		`data-format="codex"`,
+		`data-format="cursor"`,
+		`data-format="vscode"`,
+		`data-format="zed"`,
+		".mcp.json",
+		"~/.codex/config.toml",
+		".vscode/mcp.json",
+		"[mcp_servers.grafana]",
+		"context_servers",
+		"&#34;servers&#34;",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the page is missing %q", want)
+		}
+	}
+
+	// The first tab is the only panel open, so a reader without JavaScript sees
+	// one config rather than six.
+	if n := strings.Count(body, `class="panel" data-format=`); n != 6 {
+		t.Errorf("%d panels, want one per client", n)
+	}
+	if n := strings.Count(body, " hidden>"); n != 5 {
+		t.Errorf("%d panels start hidden, want all but the first", n)
+	}
+}
+
+// The token placeholder has to survive highlighting: it is the one span the
+// copy handler rewrites.
+func TestEveryClientSnippetCarriesTheMask(t *testing.T) {
+	body := render(t, pageData{
+		State:   stateIssued,
+		Email:   "someone@example.com",
+		Token:   "glsa_secret",
+		TTLDays: 90,
+	})
+
+	if n := strings.Count(body, `<span class="tok">`); n != 6 {
+		t.Errorf("%d masked tokens, want one per client", n)
+	}
+	if strings.Contains(body, tokenSentinel) {
+		t.Error("the placeholder sentinel reached the page")
 	}
 }
 
@@ -88,7 +147,7 @@ func TestActivePageReportsTheTokenAndGuardsReissue(t *testing.T) {
 	if strings.Contains(body, "data-token") {
 		t.Error("the page offers a token to copy, but the secret is long gone")
 	}
-	if !strings.Contains(snippetOf(t, body), "&lt;your token&gt;") {
+	if !strings.Contains(body, "&lt;your token&gt;") {
 		t.Error("the snippet has no placeholder where the token goes")
 	}
 
@@ -150,12 +209,14 @@ func TestFillFromDescribesTheToken(t *testing.T) {
 	}
 }
 
-func snippetOf(t *testing.T, body string) string {
+func snippetsOf(t *testing.T, body string) []string {
 	t.Helper()
-	start := strings.Index(body, `<pre id="snippet">`)
-	if start < 0 {
+	var out []string
+	for _, part := range strings.Split(body, "<pre>")[1:] {
+		out = append(out, part[:strings.Index(part, "</pre>")])
+	}
+	if len(out) == 0 {
 		t.Fatal("no snippet on the page")
 	}
-	rest := body[start:]
-	return rest[:strings.Index(rest, "</pre>")]
+	return out
 }
