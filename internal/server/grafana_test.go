@@ -29,7 +29,7 @@ func (f *fakeGrafana) handler(t *testing.T) http.Handler {
 		if id, ok := f.accounts[q]; ok {
 			out.ServiceAccounts = append(out.ServiceAccounts, serviceAccount{ID: id, Name: q, Role: "Viewer"})
 		}
-		json.NewEncoder(w).Encode(out)
+		_ = json.NewEncoder(w).Encode(out)
 	})
 
 	mux.HandleFunc("POST /api/serviceaccounts", func(w http.ResponseWriter, r *http.Request) {
@@ -37,13 +37,13 @@ func (f *fakeGrafana) handler(t *testing.T) http.Handler {
 			Name string `json:"name"`
 			Role string `json:"role"`
 		}
-		json.NewDecoder(r.Body).Decode(&body)
+		_ = json.NewDecoder(r.Body).Decode(&body)
 		if body.Role != "Viewer" {
 			t.Errorf("service account created with role %q, want Viewer", body.Role)
 		}
 		f.nextID++
 		f.accounts[body.Name] = f.nextID
-		json.NewEncoder(w).Encode(serviceAccount{ID: f.nextID, Name: body.Name, Role: body.Role})
+		_ = json.NewEncoder(w).Encode(serviceAccount{ID: f.nextID, Name: body.Name, Role: body.Role})
 	})
 
 	mux.HandleFunc("GET /api/serviceaccounts/{id}/tokens", func(w http.ResponseWriter, r *http.Request) {
@@ -51,10 +51,10 @@ func (f *fakeGrafana) handler(t *testing.T) http.Handler {
 		if out == nil {
 			out = []saToken{}
 		}
-		json.NewEncoder(w).Encode(out)
+		_ = json.NewEncoder(w).Encode(out)
 	})
 
-	mux.HandleFunc("DELETE /api/serviceaccounts/{id}/tokens/{tokenID}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("DELETE /api/serviceaccounts/{id}/tokens/{tokenID}", func(_ http.ResponseWriter, r *http.Request) {
 		f.deleted = append(f.deleted, atoi(t, r.PathValue("tokenID")))
 	})
 
@@ -62,11 +62,11 @@ func (f *fakeGrafana) handler(t *testing.T) http.Handler {
 		var body struct {
 			SecondsToLive int `json:"secondsToLive"`
 		}
-		json.NewDecoder(r.Body).Decode(&body)
+		_ = json.NewDecoder(r.Body).Decode(&body)
 		if body.SecondsToLive <= 0 {
 			t.Errorf("token requested with secondsToLive %d, want a positive TTL", body.SecondsToLive)
 		}
-		json.NewEncoder(w).Encode(map[string]string{"key": "glsa_fake"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"key": "glsa_fake"})
 	})
 
 	return mux

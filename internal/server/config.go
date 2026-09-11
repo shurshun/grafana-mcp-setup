@@ -44,6 +44,8 @@ func env(key, fallback string) string {
 	return fallback
 }
 
+// FromEnv reads the configuration and refuses to return a half-built one: a
+// missing value is a startup failure, not a surprise at the first request.
 func FromEnv() (Config, error) {
 	c := Config{
 		Addr:          env("LISTEN_ADDR", ":8080"),

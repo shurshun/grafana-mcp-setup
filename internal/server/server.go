@@ -26,6 +26,7 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 )
 
+// Server serves the pages and owns the Grafana credentials behind them.
 type Server struct {
 	cfg      Config
 	grafana  *grafana
@@ -49,6 +50,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	}, nil
 }
 
+// Handler routes everything under the configured base path, plus /healthz.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
