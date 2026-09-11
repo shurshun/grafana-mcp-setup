@@ -1,0 +1,76 @@
+# The service discovers its OIDC provider at startup and exits if it cannot, so
+# a chart-testing install needs something at the issuer URL. This is that and
+# nothing more: a static discovery document and an empty key set. No token in
+# CI is ever verified against it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fake-idp
+  namespace: default
+data:
+  openid-configuration: |
+    {
+      "issuer": "http://fake-idp.default.svc",
+      "authorization_endpoint": "http://fake-idp.default.svc/auth",
+      "token_endpoint": "http://fake-idp.default.svc/token",
+      "jwks_uri": "http://fake-idp.default.svc/jwks.json",
+      "userinfo_endpoint": "http://fake-idp.default.svc/userinfo",
+      "response_types_supported": ["code"],
+      "subject_types_supported": ["public"],
+      "id_token_signing_alg_values_supported": ["RS256"],
+      "scopes_supported": ["openid", "profile", "email", "groups"]
+    }
+  jwks.json: |
+    {"keys": []}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fake-idp
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fake-idp
+  template:
+    metadata:
+      labels:
+        app: fake-idp
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: docs
+              mountPath: /usr/share/nginx/html
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /.well-known/openid-configuration
+              port: 80
+            initialDelaySeconds: 2
+            periodSeconds: 3
+      volumes:
+        - name: docs
+          configMap:
+            name: fake-idp
+            items:
+              - key: openid-configuration
+                path: .well-known/openid-configuration
+              - key: jwks.json
+                path: jwks.json
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fake-idp
+  namespace: default
+spec:
+  selector:
+    app: fake-idp
+  ports:
+    - port: 80
+      targetPort: 80

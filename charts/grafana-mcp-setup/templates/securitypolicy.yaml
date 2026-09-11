@@ -20,7 +20,7 @@ spec:
       name: {{ include "grafana-mcp-setup.clientSecretName" . }}
     redirectURL: {{ printf "%s%s/oauth2/callback" .Values.grafana.publicURL (include "grafana-mcp-setup.basePath" .) | quote }}
     logoutPath: {{ printf "%s/logout" (include "grafana-mcp-setup.basePath" .) | quote }}
-    # The groups scope is what carries oidc.requiredGroup. Drop it and the
+    # The groups scope is what carries oidc.requiredGroups. Drop it and the
     # provider omits the claim, so every request looks like a permissions
     # failure rather than a missing scope.
     scopes:

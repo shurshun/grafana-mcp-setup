@@ -29,10 +29,15 @@ type Config struct {
 	ClientID      string
 	IDTokenCookie string
 
-	// RequiredGroup, when set, is the whole of the authorisation: the token
-	// goes only to people the identity provider puts in that group. Leave it
-	// empty only when signing in is already the permission you want to reuse.
-	RequiredGroup string
+	// RequiredGroups, when set, is the whole of the authorisation: the token
+	// goes only to people the identity provider puts in one of these groups.
+	// Several because an application's roles are often separate groups rather
+	// than nested ones, and holding any of them should be enough.
+	//
+	// Leave it empty only when signing in is already the permission you want to
+	// reuse — which it usually is not, since the proxy in front authenticates
+	// against the identity provider, not against Grafana.
+	RequiredGroups []string
 
 	TokenTTL time.Duration
 }
@@ -44,19 +49,30 @@ func env(key, fallback string) string {
 	return fallback
 }
 
+// splitList reads a comma-separated list, ignoring blanks and stray spaces.
+func splitList(v string) []string {
+	var out []string
+	for _, part := range strings.Split(v, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // FromEnv reads the configuration and refuses to return a half-built one: a
 // missing value is a startup failure, not a surprise at the first request.
 func FromEnv() (Config, error) {
 	c := Config{
-		Addr:          env("LISTEN_ADDR", ":8080"),
-		BasePath:      "/" + strings.Trim(env("BASE_PATH", "/setup-mcp"), "/"),
-		GrafanaURL:    strings.TrimRight(env("GRAFANA_URL", ""), "/"),
-		GrafanaToken:  os.Getenv("GRAFANA_ADMIN_TOKEN"),
-		PublicURL:     strings.TrimRight(env("GRAFANA_PUBLIC_URL", ""), "/"),
-		Issuer:        strings.TrimRight(env("OIDC_ISSUER", ""), "/"),
-		ClientID:      env("OIDC_CLIENT_ID", "grafana-mcp-setup"),
-		IDTokenCookie: env("ID_TOKEN_COOKIE", "mcp_id_token"),
-		RequiredGroup: os.Getenv("REQUIRED_GROUP"),
+		Addr:           env("LISTEN_ADDR", ":8080"),
+		BasePath:       "/" + strings.Trim(env("BASE_PATH", "/setup-mcp"), "/"),
+		GrafanaURL:     strings.TrimRight(env("GRAFANA_URL", ""), "/"),
+		GrafanaToken:   os.Getenv("GRAFANA_ADMIN_TOKEN"),
+		PublicURL:      strings.TrimRight(env("GRAFANA_PUBLIC_URL", ""), "/"),
+		Issuer:         strings.TrimRight(env("OIDC_ISSUER", ""), "/"),
+		ClientID:       env("OIDC_CLIENT_ID", "grafana-mcp-setup"),
+		IDTokenCookie:  env("ID_TOKEN_COOKIE", "mcp_id_token"),
+		RequiredGroups: splitList(os.Getenv("REQUIRED_GROUPS")),
 	}
 
 	days, err := strconv.Atoi(env("TOKEN_TTL_DAYS", "90"))

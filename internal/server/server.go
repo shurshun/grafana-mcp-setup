@@ -84,14 +84,17 @@ func (s *Server) identity(r *http.Request) (string, error) {
 }
 
 // authorise turns a verified token into the person it belongs to, or refuses.
-// With RequiredGroup set, the identity provider decides who may hold a Grafana
-// token, and Grafana's own access rules say nothing about it.
+// With RequiredGroups set, the identity provider decides who may hold a Grafana
+// token, and Grafana's own access rules say nothing about it — the login in
+// front of this service runs against the provider, not against Grafana.
 func (s *Server) authorise(email string, groups []string) (string, error) {
 	if email == "" {
 		return "", errors.New("the ID token carries no email")
 	}
-	if s.cfg.RequiredGroup != "" && !slices.Contains(groups, s.cfg.RequiredGroup) {
-		return "", fmt.Errorf("%q is not in %s", email, s.cfg.RequiredGroup)
+	if len(s.cfg.RequiredGroups) > 0 && !slices.ContainsFunc(s.cfg.RequiredGroups, func(want string) bool {
+		return slices.Contains(groups, want)
+	}) {
+		return "", fmt.Errorf("%q is in none of %s", email, strings.Join(s.cfg.RequiredGroups, ", "))
 	}
 	return strings.ToLower(email), nil
 }

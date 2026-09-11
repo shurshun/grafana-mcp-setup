@@ -9,15 +9,16 @@ Before anyone can use it:
 2. The identity provider needs a client {{ .Values.oidc.clientID | quote }} whose
    redirect URI is {{ .Values.grafana.publicURL }}{{ include "grafana-mcp-setup.basePath" . }}/oauth2/callback.
 
-{{- if not .Values.oidc.requiredGroup }}
+{{- if not .Values.oidc.requiredGroups }}
 
-3. oidc.requiredGroup is empty, so anyone who can sign in to the identity
-   provider can issue themselves a Grafana token. Set it unless that is what
-   you meant.
+3. oidc.requiredGroups is empty, so anyone who can sign in to the identity
+   provider can issue themselves a Grafana token — including people Grafana
+   itself would refuse, because the login in front of this service runs against
+   the provider and not against Grafana. Set it unless that is what you meant.
 {{- else }}
 
-3. The provider must emit the groups claim, and {{ .Values.oidc.requiredGroup }}
-   must contain the people who may hold a token.
+3. The provider must emit the groups claim, and holding any of
+   {{ join ", " .Values.oidc.requiredGroups }} is what lets someone issue a token.
 {{- end }}
 
 {{- if not (or .Values.ingress.enabled .Values.httpRoute.enabled) }}

@@ -25,6 +25,10 @@ jobs:
         with:
           scan-type: fs
           scanners: vuln,secret,misconfig
+          # The chart's ci/ fixtures are throwaway scaffolding for kind — an
+          # nginx pod serving a static file — and every hardening rule fires on
+          # them, burying anything real.
+          skip-dirs: charts/grafana-mcp-setup/ci
           format: sarif
           output: trivy.sarif
 
