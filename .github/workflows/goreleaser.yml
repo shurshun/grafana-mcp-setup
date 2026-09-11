@@ -75,6 +75,8 @@ jobs:
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: sigstore/cosign-installer@v3
+      # goreleaser shells out to syft for the archive SBOMs.
+      - uses: anchore/sbom-action/download-syft@v0
       - uses: azure/setup-helm@v4
 
       - name: Login to GitHub Container Registry
