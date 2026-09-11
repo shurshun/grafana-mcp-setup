@@ -35,7 +35,9 @@ func (g *grafana) do(method, path string, body any, out any) error {
 		rdr = bytes.NewReader(b)
 	}
 
-	req, err := http.NewRequest(method, g.base+path, rdr)
+	// The base URL is configuration and the path is a constant in this file;
+	// nothing a request carries reaches either.
+	req, err := http.NewRequest(method, g.base+path, rdr) // #nosec G704
 	if err != nil {
 		return err
 	}
@@ -44,11 +46,11 @@ func (g *grafana) do(method, path string, body any, out any) error {
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	resp, err := g.hc.Do(req)
+	resp, err := g.hc.Do(req) // #nosec G704
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 300 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
