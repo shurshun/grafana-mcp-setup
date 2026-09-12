@@ -35,6 +35,9 @@ function clientPicker() {
       t.setAttribute("aria-selected", on);
     });
     panels.forEach((p) => { p.hidden = p.dataset.format !== id; });
+    // The wrapper carries the client too, which is what colours the block's
+    // rail: the palette keys off data-format wherever it sits.
+    clients.dataset.format = id;
     try { localStorage.setItem("mcp-client", id); } catch {}
   }
 

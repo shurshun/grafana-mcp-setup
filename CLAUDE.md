@@ -62,6 +62,20 @@ Lease concurrency, run the real TLS, Keycloak, Envoy, and Grafana suite describe
 in [integration/README.md](integration/README.md). A static discovery fixture
 cannot verify authentication or token lifecycle.
 
+The client, launcher and storage switches share one tray (`.toolbar`). Every
+client offers the same three launchers, so that row is rendered once at the top
+level rather than per panel — the script already drove every `.variant` by
+`data-mode`, whichever panel it sat in.
+
+Marks come from simple-icons (CC0 files, trademarks still their owners'); Codex
+and VS Code keep drawn glyphs because simple-icons ships neither. Each control
+sets `--brand`, and the block's rail follows the chosen client through
+`data-format` on `.clients`. Keep those palette selectors scoped to the controls
+(`.tab[data-format=…]`, `.mode[data-mode=…]`, `.storage-mode[data-storage=…]`):
+panels and the `<pre>` blocks carry the same attributes, and an unscoped rule
+lets a variant overwrite the brand for everything inside it. Dark overrides the
+brands that are too dark to read on it — Cursor's is black, Zed's a deep blue.
+
 The stylesheet and the page script are files under `internal/server/assets`,
 embedded in the binary and served at `{BASE_PATH}/assets/app.<hash>.css|js`. The
 hash comes from the content, so the response is immutable-cacheable and a

@@ -2,30 +2,57 @@ package server
 
 import "html/template"
 
-// Plain marks rather than anyone's logo: enough to tell the tabs apart at a
-// glance, and nothing to get wrong about a trademark.
+// Client and launcher marks.
+//
+// The brand marks come from simple-icons, whose files are CC0; the marks
+// themselves remain their owners' trademarks and are here to tell six clients
+// apart at a glance, not to suggest any endorsement. simple-icons ships neither
+// OpenAI nor VS Code any more, so Codex and VS Code keep drawn glyphs, as do
+// the two launchers and the storage modes that have no brand of their own.
 const (
-	iconSpark = template.HTML(`<svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
-		<path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"
-		      stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>`)
+	// Claude, for both Claude Code and Claude Desktop.
+	iconClaude = template.HTML(`<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+		<path fill="currentColor" d="m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z"/></svg>`)
 
-	iconWindow = template.HTML(`<svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
-		<rect x="3" y="4.5" width="18" height="15" rx="2.5" stroke="currentColor" stroke-width="1.8"/>
-		<path d="M3 9h18" stroke="currentColor" stroke-width="1.8"/></svg>`)
-
-	iconTerminal = template.HTML(`<svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
-		<path d="M5 6.5l5 5.5-5 5.5M12.5 17.5H19" stroke="currentColor" stroke-width="1.9"
-		      stroke-linecap="round" stroke-linejoin="round"/></svg>`)
-
+	// Cursor.
 	iconCursor = template.HTML(`<svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
 		<path d="M5 3.5l14 7.5-6.2 1.9L10 19.5 5 3.5z" stroke="currentColor" stroke-width="1.7"
 		      stroke-linejoin="round"/></svg>`)
 
+	// Zed.
+	iconZed = template.HTML(`<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+		<path fill="currentColor" d="M2.25 1.5a.75.75 0 0 0-.75.75v16.5H0V2.25A2.25 2.25 0 0 1 2.25 0h20.095c1.002 0 1.504 1.212.795 1.92L10.764 14.298h3.486V12.75h1.5v1.922a1.125 1.125 0 0 1-1.125 1.125H9.264l-2.578 2.578h11.689V9h1.5v9.375a1.5 1.5 0 0 1-1.5 1.5H5.185L2.562 22.5H21.75a.75.75 0 0 0 .75-.75V5.25H24v16.5A2.25 2.25 0 0 1 21.75 24H1.655C.653 24 .151 22.788.86 22.08L13.19 9.75H9.75v1.5h-1.5V9.375A1.125 1.125 0 0 1 9.375 8.25h5.314l2.625-2.625H5.625V15h-1.5V5.625a1.5 1.5 0 0 1 1.5-1.5h13.19L21.438 1.5z"/></svg>`)
+
+	// uv, behind the uvx launcher.
+	iconUV = template.HTML(`<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+		<path fill="currentColor" d="m0 .1058.0504 11.9496.0403 9.5597c.0055 1.3199 1.08 2.3854 2.4 2.3798l9.5596-.0403 5.9749-.0252.6075-.0026c1.316-.0056 2.3799-1.0963 2.3799-2.4123h1.0946v2.3894L24 23.9042 23.8992.005 12.9056.0513l.0463 9.5245v5.9637h-1.9583L11.04 9.584 10.9936.0594Z"/></svg>`)
+
+	// Docker.
+	iconDocker = template.HTML(`<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+		<path fill="currentColor" d="M13.983 11.078h2.119a.186.186 0 00.186-.185V9.006a.186.186 0 00-.186-.186h-2.119a.185.185 0 00-.185.185v1.888c0 .102.083.185.185.185m-2.954-5.43h2.118a.186.186 0 00.186-.186V3.574a.186.186 0 00-.186-.185h-2.118a.185.185 0 00-.185.185v1.888c0 .102.082.185.185.185m0 2.716h2.118a.187.187 0 00.186-.186V6.29a.186.186 0 00-.186-.185h-2.118a.185.185 0 00-.185.185v1.887c0 .102.082.185.185.186m-2.93 0h2.12a.186.186 0 00.184-.186V6.29a.185.185 0 00-.185-.185H8.1a.185.185 0 00-.185.185v1.887c0 .102.083.185.185.186m-2.964 0h2.119a.186.186 0 00.185-.186V6.29a.185.185 0 00-.185-.185H5.136a.186.186 0 00-.186.185v1.887c0 .102.084.185.186.186m5.893 2.715h2.118a.186.186 0 00.186-.185V9.006a.186.186 0 00-.186-.186h-2.118a.185.185 0 00-.185.185v1.888c0 .102.082.185.185.185m-2.93 0h2.12a.185.185 0 00.184-.185V9.006a.185.185 0 00-.184-.186h-2.12a.185.185 0 00-.184.185v1.888c0 .102.083.185.185.185m-2.964 0h2.119a.185.185 0 00.185-.185V9.006a.185.185 0 00-.184-.186h-2.12a.186.186 0 00-.186.186v1.887c0 .102.084.185.186.185m-2.92 0h2.12a.185.185 0 00.184-.185V9.006a.185.185 0 00-.184-.186h-2.12a.185.185 0 00-.184.185v1.888c0 .102.082.185.185.185M23.763 9.89c-.065-.051-.672-.51-1.954-.51-.338.001-.676.03-1.01.087-.248-1.7-1.653-2.53-1.716-2.566l-.344-.199-.226.327c-.284.438-.49.922-.612 1.43-.23.97-.09 1.882.403 2.661-.595.332-1.55.413-1.744.42H.751a.751.751 0 00-.75.748 11.376 11.376 0 00.692 4.062c.545 1.428 1.355 2.48 2.41 3.124 1.18.723 3.1 1.137 5.275 1.137.983.003 1.963-.086 2.93-.266a12.248 12.248 0 003.823-1.389c.98-.567 1.86-1.288 2.61-2.136 1.252-1.418 1.998-2.997 2.553-4.4h.221c1.372 0 2.215-.549 2.68-1.009.309-.293.55-.65.707-1.046l.098-.288Z"/></svg>`)
+
+	// 1Password, behind the environment storage mode.
+	iconOnePassword = template.HTML(`<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+		<path fill="currentColor" d="M12 0c6.627 0 12 5.373 12 12 0 6.628-5.373 12-12 12S0 18.628 0 12C0 5.373 5.373 0 12 0m-.893 4.86c-.485 0-.727.001-.913.095a.87.87 0 0 0-.378.379c-.094.185-.095.428-.095.912v2.747c0 .12 0 .182.016.238q.02.075.065.138a1 1 0 0 0 .175.162l.695.564c.113.092.17.139.19.194a.22.22 0 0 1 0 .15c-.02.056-.077.102-.19.194l-.695.564a1 1 0 0 0-.175.162.4.4 0 0 0-.065.138 1 1 0 0 0-.016.238v6.019c0 .485 0 .728.095.913a.87.87 0 0 0 .378.378c.186.094.428.094.913.094h1.786c.485 0 .727 0 .913-.094a.87.87 0 0 0 .378-.378c.095-.185.095-.428.095-.913v-2.747c0-.12 0-.182-.016-.238a.4.4 0 0 0-.065-.138 1 1 0 0 0-.175-.162l-.695-.564c-.113-.092-.17-.138-.191-.193a.22.22 0 0 1 0-.152c.02-.055.078-.1.19-.193l.696-.564a1 1 0 0 0 .175-.162.4.4 0 0 0 .065-.138 1 1 0 0 0 .016-.238V6.246c0-.484 0-.727-.095-.912a.87.87 0 0 0-.378-.379c-.186-.094-.428-.094-.913-.094Z"/></svg>`)
+
+	// Codex, drawn.
+	iconTerminal = template.HTML(`<svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
+		<path d="M5 6.5l5 5.5-5 5.5M12.5 17.5H19" stroke="currentColor" stroke-width="1.9"
+		      stroke-linecap="round" stroke-linejoin="round"/></svg>`)
+
+	// VS Code, drawn.
 	iconBrackets = template.HTML(`<svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
 		<path d="M9 6.5L3.5 12 9 17.5M15 6.5L20.5 12 15 17.5" stroke="currentColor" stroke-width="1.9"
 		      stroke-linecap="round" stroke-linejoin="round"/></svg>`)
 
-	iconZ = template.HTML(`<svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
-		<path d="M6 6.5h12L6 17.5h12" stroke="currentColor" stroke-width="1.9"
-		      stroke-linecap="round" stroke-linejoin="round"/></svg>`)
+	// An installed binary on PATH.
+	iconChip = template.HTML(`<svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
+		<rect x="7" y="7" width="10" height="10" rx="2" stroke="currentColor" stroke-width="1.8"/>
+		<path d="M10 3.5v3M14 3.5v3M10 17.5v3M14 17.5v3M3.5 10h3M3.5 14h3M17.5 10h3M17.5 14h3"
+		      stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>`)
+
+	// The token written straight into the configuration file.
+	iconBraces = template.HTML(`<svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
+		<path d="M9 4.5H8A2.5 2.5 0 005.5 7v2.5a2 2 0 01-2 2 2 2 0 012 2V16A2.5 2.5 0 008 18.5h1M15 4.5h1A2.5 2.5 0 0118.5 7v2.5a2 2 0 002 2 2 2 0 00-2 2V16a2.5 2.5 0 01-2.5 2.5h-1"
+		      stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>`)
 )
