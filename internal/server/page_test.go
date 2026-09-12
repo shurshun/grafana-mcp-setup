@@ -103,7 +103,7 @@ func TestIssuedPageCoversEveryClient(t *testing.T) {
 	if n := strings.Count(body, `class="panel" data-format=`); n != 6 {
 		t.Errorf("%d panels, want one per client", n)
 	}
-	if n := strings.Count(body, " hidden>"); n != 5 {
+	if n := strings.Count(body, `role="tabpanel" hidden>`); n != 5 {
 		t.Errorf("%d panels start hidden, want all but the first", n)
 	}
 }
@@ -118,8 +118,8 @@ func TestEveryClientSnippetCarriesTheMask(t *testing.T) {
 		TTLDays: 90,
 	})
 
-	if n := strings.Count(body, `<span class="tok">`); n != 18 {
-		t.Errorf("%d masked tokens, want one per client and launch mode", n)
+	if n := strings.Count(body, `<span class="tok">`); n != 19 {
+		t.Errorf("%d masked tokens, want 18 launch modes and the 1Password token", n)
 	}
 	if strings.Contains(body, tokenSentinel) {
 		t.Error("the placeholder sentinel reached the page")

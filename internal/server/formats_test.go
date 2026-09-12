@@ -50,6 +50,27 @@ func TestLaunchModesKeepSecretsOutOfCommandArguments(t *testing.T) {
 	}
 }
 
+func TestEnvironmentExamplesOmitToken(t *testing.T) {
+	for _, client := range formats("https://grafana.example.com", "SECRET_MASK") {
+		for _, variant := range client.Variants {
+			body := unescape(stripTags(string(variant.EnvBody)))
+			for _, forbidden := range []string{tokenSentinel, "SECRET_MASK", `GRAFANA_SERVICE_ACCOUNT_TOKEN =`, `"GRAFANA_SERVICE_ACCOUNT_TOKEN":`} {
+				if strings.Contains(body, forbidden) {
+					t.Fatalf("%s/%s env contains %q", client.ID, variant.ID, forbidden)
+				}
+			}
+			for _, want := range []string{"/Users/example/work/project", "--disable-write", "https://grafana.example.com", `"direnv"`} {
+				if !strings.Contains(body, want) {
+					t.Fatalf("%s/%s env missing %q", client.ID, variant.ID, want)
+				}
+			}
+			if client.ID != "codex" && !json.Valid([]byte(body)) {
+				t.Fatalf("%s/%s invalid JSON", client.ID, variant.ID)
+			}
+		}
+	}
+}
+
 func TestEveryClientHasThreeMaskedLaunchModes(t *testing.T) {
 	clients := formats("https://grafana.example.com", "MASKED")
 	if len(clients) != 6 {

@@ -95,6 +95,35 @@ version for the binary option as well. Every mode uses stdio and
 token value out of command arguments. The Grafana public URL must be reachable
 from the client's container; `localhost` inside it refers to that container.
 
+### 1Password Environments
+
+Choose **1Password / env** for any client and launch mode. Copy the issued token into
+your 1Password Environment as `GRAFANA_SERVICE_ACCOUNT_TOKEN`, then mount that
+Environment at `/Users/example/work/project/.env`. Saving to 1Password is manual.
+
+If direnv already loads that file, keep your existing setup. Otherwise add
+`dotenv .env` to the project's `.envrc`, review it, and run `direnv allow`.
+Install direnv and `mcp-grafana` 1.4.1 and make them available to your MCP client. If the
+desktop app cannot find them, use absolute executable paths in the configuration.
+
+```toml
+[mcp_servers.grafana]
+command = "direnv"
+args = ["exec", "/Users/example/work/project", "mcp-grafana", "-t", "stdio", "--disable-write"]
+
+[mcp_servers.grafana.env]
+GRAFANA_URL = "https://grafana.example.com"
+```
+
+Replace the project path and Grafana URL with your own. The MCP configuration
+contains no token. direnv loads it before starting the MCP server, including when
+Codex itself was launched outside your terminal.
+
+After token rotation, update the Environment and restart the MCP server. Existing
+processes retain their old environment. The mounted `.env` is a named pipe, so
+avoid concurrent readers and file watchers. See the
+[1Password local .env documentation](https://www.1password.dev/environments/local-env-file).
+
 ## Kubernetes
 
 Set credentials in `values.yaml`. The chart creates the Kubernetes Secrets.
