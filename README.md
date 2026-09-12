@@ -3,6 +3,8 @@
 Issue personal Grafana service-account tokens after OIDC login. The page supplies
 configurations for Claude Code, Claude Desktop, Codex, Cursor, VS Code, and Zed.
 
+![The page after a token is issued](images/token.png)
+
 **The issued Viewer service account does not inherit the user's Grafana roles,
 teams, folder permissions, or datasource restrictions.** In Grafana OSS, it can
 normally query every datasource available to its organization. `--disable-write`
@@ -32,6 +34,8 @@ account cleanup. `REQUIRED_GROUPS` grants access when any exact group matches.
 An empty list is a startup error unless `ALLOW_ALL_AUTHENTICATED_USERS=true`.
 Request the `groups` OIDC scope. Grafana's own login rules do not authorize this
 separate service.
+
+![The landing page](images/landing.png)
 
 ## Grafana API mode
 
@@ -79,6 +83,8 @@ recreation or token revocation. See
 The browser must receive the token to copy it. Masking protects screenshots,
 not the browser session or clipboard. Removing an IdP group does not revoke an
 existing Grafana token. Offboarding must revoke credentials separately.
+
+![The page when a token already exists](images/status.png)
 
 ## Client launch modes
 

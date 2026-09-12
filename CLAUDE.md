@@ -71,8 +71,9 @@ The release depends on Go checks, chart validation, and the real integration
 suite. Security workflows scan the image and filesystem, run govulncheck and
 CodeQL, and audit GitHub Actions with zizmor.
 
-The release tag supplies chart and app versions during packaging; `Chart.yaml`
-holds the local packaging version. Image and chart paths use
+Follow the [release contract](code.md). Before tagging a release, update both
+`version` and `appVersion` in `Chart.yaml` to the application release version.
+Publish the application and chart together. Image and chart paths use
 `GITHUB_REPOSITORY_OWNER`, including in forks. GoReleaser needs `syft` for SBOMs.
 
 Every commit requires a `Signed-off-by` trailer matching its author. Use
