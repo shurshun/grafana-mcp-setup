@@ -21,6 +21,22 @@ trap 'rm -rf "$work"; [ -n "${server:-}" ] && kill "$server" 2>/dev/null || true
 
 DUMP_DIR="$work" go test -run TestDumpPages "$root/internal/server" >/dev/null
 
+# The page links its stylesheet and module by hashed name under the base path,
+# so the capture serves them from the same tree as the pages.
+python3 - "$root" "$work" <<'ASSETS'
+import hashlib, pathlib, shutil, sys
+
+root, work = (pathlib.Path(a) for a in sys.argv[1:3])
+out = work / "setup-mcp" / "assets"
+out.mkdir(parents=True, exist_ok=True)
+
+for source in ("app.css", "app.js"):
+    path = root / "internal" / "server" / "assets" / source
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+    stem, suffix = source.rsplit(".", 1)
+    shutil.copyfile(path, out / f"{stem}.{digest}.{suffix}")
+ASSETS
+
 python3 - "$work" <<'PY'
 import pathlib, sys
 
@@ -31,7 +47,8 @@ work = pathlib.Path(sys.argv[1])
 # measured, because that mode is a page taller.
 (work / 'environment.html').write_text(
     (work / 'issued.html').read_text()
-    + '\n<script>document.querySelector(\'[data-storage="env"]\').click();</script>\n'
+    + '\n<script>addEventListener("load", () => '
+      'document.querySelector(\'[data-storage="env"]\').click());</script>\n'
 )
 
 for page in work.glob('*.html'):
@@ -41,10 +58,12 @@ for page in work.glob('*.html'):
     html = html.replace('@media (prefers-color-scheme: dark)', '@media all')
     # Chrome has no full-page screenshot flag; the height is reported through
     # the title, which --dump-dom prints and the shell reads back.
-    # The body carries the page's own padding, while scrollHeight never drops
-    # below the viewport and would pad a short page with dead space.
-    html += ('\n<script>document.title = '
-             'Math.ceil(document.body.getBoundingClientRect().height);</script>\n')
+    # Measured after load: the page's behaviour is a deferred module, so a
+    # height read during parsing misses whatever it reveals. The body box is
+    # used rather than scrollHeight, which never drops below the viewport and
+    # would pad a short page with dead space.
+    html += ('\n<script>addEventListener("load", () => { document.title = '
+             'Math.ceil(document.body.getBoundingClientRect().height); });</script>\n')
     page.write_text(html)
 PY
 

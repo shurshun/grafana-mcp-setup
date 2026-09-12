@@ -62,6 +62,17 @@ Lease concurrency, run the real TLS, Keycloak, Envoy, and Grafana suite describe
 in [integration/README.md](integration/README.md). A static discovery fixture
 cannot verify authentication or token lifecycle.
 
+The stylesheet and the page script are files under `internal/server/assets`,
+embedded in the binary and served at `{BASE_PATH}/assets/app.<hash>.css|js`. The
+hash comes from the content, so the response is immutable-cacheable and a
+release reaches every reader without a stale copy. That is what lets the policy
+say `script-src 'self'` instead of carrying a nonce, and what keeps the page
+itself from re-sending 12KB of CSS and JS on every render. The script is a
+module, so its names never reach the window — a page-level `const` collides with
+whatever a browser extension declares, and the resulting parse error kills the
+whole block. The one inline rule left is the `<noscript>` block, which is why
+`style-src` still carries a nonce.
+
 `scripts/screenshots.sh` renders the pages with `TestDumpPages`, so the images
 carry the documented example data rather than a live stack's hostnames. It pins
 the dark palette by dropping the `prefers-color-scheme` query, reads each page's

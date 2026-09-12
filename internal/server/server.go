@@ -88,6 +88,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /readyz", s.handleReady)
 	mux.Handle("GET /metrics", s.metrics)
 	mux.HandleFunc("GET "+s.cfg.BasePath, s.handlePage)
+	mux.HandleFunc("GET "+s.cfg.BasePath+"/assets/{name}", s.handleAsset)
 	mux.HandleFunc("POST "+s.cfg.BasePath+"/token", s.handleIssue)
 	mux.HandleFunc("GET "+s.cfg.BasePath+"/token", s.handleShow)
 	mux.HandleFunc("POST "+s.cfg.BasePath+"/revoke", s.handleRevoke)
