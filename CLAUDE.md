@@ -53,6 +53,7 @@ golangci-lint run
 helm lint charts/grafana-mcp-setup -f charts/grafana-mcp-setup/ci/routed-values.yaml
 helm template test charts/grafana-mcp-setup -f charts/grafana-mcp-setup/ci/routed-values.yaml
 docker build -f Dockerfile.local -t grafana-mcp-setup:dev .
+scripts/screenshots.sh   # retake the README images
 ```
 
 Use the Go toolchain and linter versions pinned in the workflow. The release
@@ -60,6 +61,14 @@ Dockerfile consumes GoReleaser's prebuilt binary. To verify proxy behavior or
 Lease concurrency, run the real TLS, Keycloak, Envoy, and Grafana suite described
 in [integration/README.md](integration/README.md). A static discovery fixture
 cannot verify authentication or token lifecycle.
+
+`scripts/screenshots.sh` renders the pages with `TestDumpPages`, so the images
+carry the documented example data rather than a live stack's hostnames. It pins
+the dark palette by dropping the `prefers-color-scheme` query, reads each page's
+height back through its title because Chrome has no full-page screenshot flag,
+and shoots at 1000px and 2x. Do not crop afterwards: `sips -c` crops from the
+centre and takes the heading off the top. The integration suite captures the
+same pages for CI artifacts; those are test output, not documentation.
 
 Keep tokens, cookies, raw upstream error bodies, and token-bearing HTML out of
 logs and CI artifacts. Test credentials belong only to disposable fixtures.

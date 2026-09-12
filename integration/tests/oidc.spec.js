@@ -201,7 +201,7 @@ test('Envoy authenticates with OIDC and forwards a verified ID token', async ({ 
 
   const context = await browser.newContext({
     viewport: { width: 1000, height: 800 },
-    colorScheme: 'light',
+    colorScheme: 'dark',
     permissions: ['clipboard-read', 'clipboard-write'],
     extraHTTPHeaders: { 'X-Grafana-MCP-ID-Token': 'forged' },
   });
