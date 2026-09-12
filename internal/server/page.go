@@ -393,6 +393,10 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
   </div>
 
   <script nonce="{{ .CSPNonce }}">
+    // Scoped: every name here would otherwise be a global, and a page that
+    // declares one an extension already holds dies with a SyntaxError before a
+    // single line runs.
+    (() => {
     const ask = document.getElementById("ask");
     const confirmBox = document.getElementById("confirm");
     ask.addEventListener("click", () => { confirmBox.hidden = false; ask.hidden = true; });
@@ -400,6 +404,7 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
       confirmBox.hidden = true;
       ask.hidden = false;
     });
+    })();
   </script>
 
 {{ else }}
@@ -511,6 +516,9 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
 </div>
 
   <script nonce="{{ .CSPNonce }}">
+    // Scoped for the same reason as above: the name clients in particular
+    // collides with what browser extensions put on the window.
+    (() => {
     const clients = document.querySelector(".clients");
     let token = clients.dataset.token;
     let tokenCopied = false;
@@ -612,6 +620,7 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
         setTimeout(() => { label.textContent = originalLabel; copy.classList.remove("ok"); }, 2000);
       });
     });
+    })();
   </script>
 {{ end }}
 `))
