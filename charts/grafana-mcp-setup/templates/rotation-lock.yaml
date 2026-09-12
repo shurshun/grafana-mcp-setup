@@ -14,6 +14,10 @@ kind: Role
 metadata:
   name: {{ include "grafana-mcp-setup.fullname" . }}-rotation
 rules:
+  # Kubernetes cannot restrict create requests by resourceNames.
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [create]
   - apiGroups: [coordination.k8s.io]
     resources: [leases]
     resourceNames: [{{ .Values.rotationLock.leaseName | quote }}]

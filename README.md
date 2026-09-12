@@ -142,8 +142,11 @@ helm upgrade --install grafana-mcp-setup oci://ghcr.io/shurshun/charts/grafana-m
   --namespace observability --create-namespace --values values.yaml
 ```
 
-The Kubernetes lock serializes mutations through one namespaced Lease. Its Role
-can access only that named object. Default token automount stays disabled;
+The Kubernetes lock serializes mutations through one namespaced Lease. The issuer
+creates it when missing. Its Role allows namespaced Lease creation and restricts
+get/update/patch to that named object. With Argo CD, set
+`rotationLock.createLease: false` so the issuer manages the runtime Lease.
+Argo CD deploys the application and RBAC. Default token automount stays disabled;
 Kubernetes mode mounts a separate projected token and cluster CA. All issuers
 sharing accounts must share the lock. Keep the same flash-cookie key across pods.
 

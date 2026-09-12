@@ -105,9 +105,29 @@ type leaseLocker struct {
 }
 
 func (l *leaseLocker) ready(ctx context.Context) error {
-	var lease kubeLease
-	_, err := l.request(ctx, http.MethodGet, nil, &lease)
+	_, err := l.readLease(ctx, true)
 	return err
+}
+
+func (l *leaseLocker) readLease(ctx context.Context, create bool) (kubeLease, error) {
+	var lease kubeLease
+	status, err := l.request(ctx, http.MethodGet, nil, &lease)
+	if status != http.StatusNotFound || !create {
+		return lease, err
+	}
+	initial := map[string]any{
+		"apiVersion": "coordination.k8s.io/v1",
+		"kind":       "Lease",
+		"metadata":   map[string]string{"name": l.leaseName, "namespace": l.namespace},
+		"spec":       map[string]any{},
+	}
+	status, err = l.request(ctx, http.MethodPost, initial, nil)
+	if err != nil && status != http.StatusConflict {
+		return lease, err
+	}
+	// Another pod may have created and acquired the Lease before this pod.
+	_, err = l.request(ctx, http.MethodGet, nil, &lease)
+	return lease, err
 }
 
 type kubeLease struct {
@@ -172,7 +192,11 @@ func newLeaseLocker(cfg Config) (*leaseLocker, error) {
 }
 
 func (l *leaseLocker) path() string {
-	return "/apis/coordination.k8s.io/v1/namespaces/" + url.PathEscape(l.namespace) + "/leases/" + url.PathEscape(l.leaseName)
+	return l.collectionPath() + "/" + url.PathEscape(l.leaseName)
+}
+
+func (l *leaseLocker) collectionPath() string {
+	return "/apis/coordination.k8s.io/v1/namespaces/" + url.PathEscape(l.namespace) + "/leases"
 }
 
 func (l *leaseLocker) request(ctx context.Context, method string, body any, out any) (int, error) {
@@ -190,7 +214,11 @@ func (l *leaseLocker) request(ctx context.Context, method string, body any, out 
 	}
 	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, method, l.baseURL+l.path(), reader) // #nosec G704 -- Kubernetes supplies the API host; no request input controls it.
+	path := l.path()
+	if method == http.MethodPost {
+		path = l.collectionPath()
+	}
+	req, err := http.NewRequestWithContext(reqCtx, method, l.baseURL+path, reader) // #nosec G704 -- Kubernetes supplies the API host; no request input controls it.
 	if err != nil {
 		return 0, err
 	}
@@ -251,8 +279,8 @@ func (l *leaseLocker) Acquire(ctx context.Context, _ string) (mutationGuard, err
 }
 
 func (l *leaseLocker) update(ctx context.Context, holder string, acquire bool) (bool, error) {
-	var lease kubeLease
-	if _, err := l.request(ctx, http.MethodGet, nil, &lease); err != nil {
+	lease, err := l.readLease(ctx, acquire)
+	if err != nil {
 		return false, err
 	}
 	now := l.now().UTC()

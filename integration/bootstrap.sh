@@ -145,6 +145,9 @@ helm upgrade --install "$release" charts/grafana-mcp-setup \
   --wait \
   --timeout 3m
 
+kubectl -n "$namespace" get lease grafana-mcp-integration -o json |
+  jq -e '.metadata.annotations["meta.helm.sh/release-name"] == null' >/dev/null
+
 kubectl -n "$namespace" wait --for=condition=Accepted gateway/integration --timeout=180s
 route_accepted='any(.status.parents[]?.conditions[]?; .type == "Accepted" and .status == "True")'
 policy_accepted='any(.status.ancestors[]?.conditions[]?; .type == "Accepted" and .status == "True")'

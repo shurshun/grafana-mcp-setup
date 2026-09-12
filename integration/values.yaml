@@ -8,6 +8,7 @@ image:
 rotationLock:
   mode: kubernetes
   leaseName: grafana-mcp-integration
+  createLease: false
 
 appPublicURL: https://app.integration
 basePath: /setup-mcp
