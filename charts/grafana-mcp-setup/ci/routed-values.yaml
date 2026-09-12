@@ -10,6 +10,9 @@ grafana:
   publicURL: https://grafana.example.com
   adminToken: ci-not-a-real-token
 
+flashCookie:
+  key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+
 oidc:
   # Served by ci/fake-idp.yaml, which the workflow installs first.
   issuer: http://fake-idp.default.svc

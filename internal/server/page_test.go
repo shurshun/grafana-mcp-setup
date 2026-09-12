@@ -118,8 +118,8 @@ func TestEveryClientSnippetCarriesTheMask(t *testing.T) {
 		TTLDays: 90,
 	})
 
-	if n := strings.Count(body, `<span class="tok">`); n != 6 {
-		t.Errorf("%d masked tokens, want one per client", n)
+	if n := strings.Count(body, `<span class="tok">`); n != 18 {
+		t.Errorf("%d masked tokens, want one per client and launch mode", n)
 	}
 	if strings.Contains(body, tokenSentinel) {
 		t.Error("the placeholder sentinel reached the page")
@@ -178,7 +178,7 @@ func TestSpentLinkSaysSoWithoutRotating(t *testing.T) {
 }
 
 func TestLandingPageOffersToIssue(t *testing.T) {
-	body := render(t, pageData{State: stateNone, Email: "someone@example.com", TTLDays: 90})
+	body := render(t, pageData{State: stateNone, Email: "someone@example.com", TTLDays: 90, CSRFToken: "signed-csrf"})
 
 	if !strings.Contains(body, `action="/setup-mcp/token"`) {
 		t.Error("no issue form on the landing page")
@@ -188,6 +188,29 @@ func TestLandingPageOffersToIssue(t *testing.T) {
 	}
 	if strings.Contains(body, `id="snippet"`) {
 		t.Error("the landing page shows a config for a token nobody has yet")
+	}
+	if !strings.Contains(body, `name="csrf_token" value="signed-csrf"`) {
+		t.Error("issue form has no signed CSRF token")
+	}
+}
+
+func TestPageUsesNonceCSPAndExplainsPartialCleanup(t *testing.T) {
+	s := &Server{cfg: Config{PublicURL: "https://grafana.example.com", BasePath: "/setup-mcp"}}
+	w := httptest.NewRecorder()
+	s.render(w, pageData{State: stateIssued, Email: "someone@example.com", Token: "glsa_secret", PartialCleanup: true})
+	body := w.Body.String()
+	csp := w.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "script-src 'nonce-") || !strings.Contains(csp, "frame-ancestors 'none'") {
+		t.Fatalf("CSP = %q", csp)
+	}
+	if !strings.Contains(body, `script nonce="`) || !strings.Contains(body, `style nonce="`) {
+		t.Fatal("inline resources have no CSP nonce")
+	}
+	if !strings.Contains(body, "did not confirm that every") {
+		t.Fatal("partial cleanup warning is missing")
+	}
+	if !strings.Contains(body, "delete clients.dataset.token") {
+		t.Fatal("successful clipboard copy does not clear the DOM token")
 	}
 }
 

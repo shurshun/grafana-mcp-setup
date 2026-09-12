@@ -1,194 +1,204 @@
 # grafana-mcp-setup
 
-Self-service Grafana tokens for MCP clients. Someone opens a page, signs in with
-your existing identity provider, and gets a personal read-only token plus the
-config block to paste into their client — Claude Code, Claude Desktop, Codex,
-Cursor, VS Code or Zed, each in the shape and the file that client actually
-reads. No administrator in the loop.
+Issue personal Grafana service-account tokens after OIDC login. The page supplies
+configurations for Claude Code, Claude Desktop, Codex, Cursor, VS Code, and Zed.
 
-![The page after a token is issued](images/token.png)
+**The issued Viewer service account does not inherit the user's Grafana roles,
+teams, folder permissions, or datasource restrictions.** In Grafana OSS, it can
+normally query every datasource available to its organization. `--disable-write`
+disables MCP write tools; it does not restrict the data that can be read. Only
+admit users who may share this Viewer access.
 
-## Why it exists
+## Authentication
 
-[`mcp-grafana`](https://github.com/grafana/mcp-grafana) authenticates with a
-static service-account token. There is no OAuth and no on-behalf-of, so every
-person who wants Grafana in their MCP client needs a token of their own.
-
-Grafana OSS will not let them create one. Making a service account needs the
-**Admin** role, RBAC with finer-grained roles is an Enterprise feature, and most
-people are Viewers. The usual outcome is an administrator minting tokens by
-hand, or — worse — one shared token passed around.
-
-This service splits it: **identity from the user, privilege from the service.**
-The person proves who they are through OIDC; the service holds the Admin token
-and creates a Viewer service account named `mcp-<email>` for them.
-
-## How it fits together
-
-```
-browser → https://grafana.example.com/setup-mcp
-   → your proxy (Envoy Gateway SecurityPolicy, oauth2-proxy, …)
-        └ OIDC login, ID token left in a cookie
-   → grafana-mcp-setup:8080
-        └ verifies the cookie, then uses its own Admin token to create
-          the service account mcp-<email> with the Viewer role
+```text
+Browser → Envoy → OIDC provider
+        → Envoy forwards X-Grafana-MCP-ID-Token
+        → Issuer verifies JWT and group membership
+        → Grafana creates or rotates mcp-<lowercase email>
 ```
 
-Authentication belongs to the proxy, so this service carries no login code and
-no session store. It verifies the ID token's signature against the issuer's JWKS
-rather than trusting the cookie, because that cookie arrives over plain HTTP
-inside the cluster.
+Envoy Gateway 1.9 supports `forwardIDToken.header`. Attach its SecurityPolicy to
+the issuer's HTTPRoute so Grafana's own routes retain their authentication.
+The application verifies signature, issuer, audience, and expiry against the
+provider's JWKS. The proxy must overwrite client-supplied identity headers.
 
-The route is mounted under a prefix (`/setup-mcp` by default) on the Grafana
-hostname. That keeps the config snippet same-origin and leaves Grafana's own
-routes untouched — with the Gateway API, attach the policy to this `HTTPRoute`
-rather than to the gateway.
+`ID_TOKEN_SOURCE=cookie` explicitly selects compatibility mode for a proxy that
+delivers a raw JWT in `ID_TOKEN_COOKIE`. Envoy 1.39 can decrypt its browser token
+cookies before forwarding them upstream. New installations use the header mode.
 
-## Authorisation
+Email remains the identity key. Changed or reassigned addresses need explicit
+account cleanup. `REQUIRED_GROUPS` grants access when any exact group matches.
+An empty list is a startup error unless `ALLOW_ALL_AUTHENTICATED_USERS=true`.
+Request the `groups` OIDC scope. Grafana's own login rules do not authorize this
+separate service.
 
-Signing in is authentication, not permission. The proxy in front authenticates
-against the identity provider, not against Grafana, so Grafana's own rules —
-`role_attribute_strict` and the rest — have no say over who reaches this page.
-Without `oidc.requiredGroups`, anyone your provider lets in can issue themselves
-a token, including people Grafana would refuse at its own login.
+## Grafana API mode
 
-List the groups that may hold one and the provider decides. Any one of them is
-enough, because an application's roles are usually separate groups: viewers in
-one, admins in another, neither nested in the other.
+Select the API explicitly with `GRAFANA_API_MODE` or Helm `grafana.apiMode`.
 
-The group has to reach the service in the `groups` claim, which means the proxy
-must request the `groups` scope. Forget it and the claim is absent, every request
-is refused, and it looks like a permissions problem rather than a missing scope.
+| Mode | API | Grafana 13.2.1 requirement |
+|---|---|---|
+| `legacy` (default) | `/api/serviceaccounts` | No experimental feature flags |
+| `iam` | `/apis/iam.grafana.app/v0alpha1` | Enable both flags below |
 
-## What a token is
+To opt into IAM, configure `GRAFANA_API_MODE=iam` (Helm `grafana.apiMode: iam`)
+and enable its account and token APIs in Grafana.
 
-- Service account `mcp-<email>`, role **Viewer**, whatever the person's own role
-  in Grafana. MCP is read-only by policy, and the snippet adds
-  `--disable-write` on top.
-- Expires after `tokenTTLDays` (90 by default), set per token rather than
-  through Grafana's global `token_expiration_day_limit` — that one would expire
-  this service's own Admin token too.
-- A reissue **rotates**: previous tokens are deleted before the new one is
-  created, so nobody accumulates live credentials.
-- Stored nowhere: not in a log, not in a database, not in a URL.
-
-### Clients
-
-The snippet comes in six flavours because the clients disagree about all three
-of file, key and syntax: most read `mcpServers`, VS Code calls the same map
-`servers` and wants a `type`, Zed wraps the command in an object of its own, and
-Codex keeps TOML rather than JSON. Pick a tab and the block is ready to paste;
-the choice is remembered for the next visit.
-
-### Three states
-
-`GET /setup-mcp` asks Grafana what the person already has.
-
-| State | What the page shows |
-|---|---|
-| no live token | the pitch and an **Issue a token** button |
-| a live token | its dates, the config shape with a placeholder, and a guarded reissue |
-| just issued | the secret itself, masked, with a copy button |
-
-![The page when a token already exists](images/status.png)
-
-Grafana reveals a secret once and never again, so an existing token can be
-described but not re-shown. The page says that plainly instead of implying a
-second look is possible.
-
-On screen the secret is a run of asterisks and the copy button holds the real
-one in a data attribute. That defeats a shoulder and a screenshot, not the
-reader — the page has to carry the token to the browser, so view-source still
-shows it.
-
-Reissue takes two clicks, with the consequence spelled out in between. Issuing
-is post/redirect/get: the secret waits in memory under a single-use id and the
-redirect spends it, so reloading the page that shows a token cannot repeat the
-POST and rotate it behind the reader's back.
-
-That stash is per-process, which is why the chart runs **one replica**. With
-two, a redirect could land on the other pod and the page would say the token was
-already shown.
-
-![The landing page](images/landing.png)
-
-## Install
-
-```sh
-helm install grafana-mcp-setup oci://ghcr.io/shurshun/charts/grafana-mcp-setup \
-  --namespace monitoring \
-  --set grafana.url=http://grafana.monitoring.svc \
-  --set grafana.publicURL=https://grafana.example.com \
-  --set grafana.adminToken=glsa_… \
-  --set oidc.issuer=https://idp.example.com \
-  --set oidc.requiredGroups={/grafana-mcp}
+```ini
+[feature_toggles]
+enable = kubernetesServiceAccountsApi kubernetesServiceAccountTokensApi
 ```
 
-Two things have to exist first:
+Merge these with existing flags and restart Grafana. Grafana marks these APIs
+experimental. Version 13 alone does not mean the endpoints are enabled.
+`/readyz` checks the selected API before the issuer receives traffic. The client
+never switches APIs automatically after an error or during a rotation.
 
-1. **A Grafana service account with the Admin role**, and its token in
-   `grafana.adminToken` or an existing secret. Admin is not a preference —
-   creating service accounts requires it.
-2. **An OIDC client** whose redirect URI is
-   `https://grafana.example.com/setup-mcp/oauth2/callback`, emitting the
-   `groups` claim if you use `oidc.requiredGroups`.
+Both modes find the same existing `mcp-<email>` accounts. Legacy uses numeric
+identifiers; IAM uses resource names. Switching modes does not require account
+recreation or token revocation. See
+[migration and deployment notes](docs/deployment.md).
 
-Then route to it. With Envoy Gateway the chart can render both objects:
+## Token lifecycle
+
+- Tokens expire after `TOKEN_TTL_DAYS`, which defaults to 90 days.
+- Issuance and revocation share a lock. Issuance requires an enabled Viewer
+  account; revocation also permits disabled Viewer accounts.
+- Rotation creates the new token before deleting old tokens. Partial failures
+  require reconciliation; deleting the new token cannot restore deleted tokens.
+- POST redirects to GET. Reloading the result does not repeat issuance.
+- The result travels in a short-lived authenticated encrypted flash cookie,
+  bound to the authenticated identity. All pods use the same key.
+- The cookie is deleted after display. A saved copy remains replayable by that
+  authenticated identity until its five-minute expiry. This is not strict
+  single-use storage.
+- Secrets are not written to logs, a database, or a URL. They exist transiently
+  in process memory, in encrypted browser cookies, and in the displayed page.
+
+The browser must receive the token to copy it. Masking protects screenshots,
+not the browser session or clipboard. Removing an IdP group does not revoke an
+existing Grafana token. Offboarding must revoke credentials separately.
+
+## Client launch modes
+
+Choose an installed binary, `uvx`, or Docker without issuing another token.
+The uvx package and Docker image are pinned to `mcp-grafana` 1.4.1; install that
+version for the binary option as well. Every mode uses stdio and
+`--disable-write`. Docker forwards environment variables by name and keeps the
+token value out of command arguments. The Grafana public URL must be reachable
+from the client's container; `localhost` inside it refers to that container.
+
+## Kubernetes
+
+Provision existing Secrets through your secret manager before installing.
+
+| Secret | Key | Purpose |
+|---|---|---|
+| `mcp-grafana-admin` | `admin-token` | Grafana Admin service-account token |
+| `mcp-oidc` | `client-secret` | OIDC client secret |
+| `mcp-flash` | `flash-cookie-key` | Persistent base64-encoded random 32-byte key |
+
+Use External Secrets, SOPS, Sealed Secrets, or your existing provisioning tool.
+Inline secret values are development-only because Helm retains release values.
+Do not pass production credentials through `--set`.
 
 ```yaml
+appPublicURL: https://mcp.example.com
+grafana:
+  apiMode: legacy
+  url: http://grafana.observability.svc
+  publicURL: https://grafana.example.com
+  namespace: default
+  existingSecret: mcp-grafana-admin
+flashCookie:
+  existingSecret: mcp-flash
+oidc:
+  issuer: https://idp.example.com
+  requiredGroups: [/grafana-mcp]
+  idTokenSource: header
+  idTokenHeader: X-Grafana-MCP-ID-Token
+rotationLock:
+  mode: kubernetes
+  leaseName: grafana-mcp-rotation
 httpRoute:
   enabled: true
   parentRefs:
     - name: envoy-gateway
       namespace: envoy-gateway-system
-      sectionName: http
-  hostnames:
-    - grafana.example.com
-
+      sectionName: https
+  hostnames: [mcp.example.com]
 securityPolicy:
   enabled: true
-  clientSecret: …
+  existingSecret: mcp-oidc
 ```
 
-With ingress-nginx, enable `ingress` instead and put an authenticating proxy in
-front — oauth2-proxy as a sidecar works, as long as it leaves the ID token in
-the cookie named by `oidc.idTokenCookie`.
+Register `https://mcp.example.com/setup-mcp/oauth2/callback` with the provider.
+Save as `values.yaml`, then install the matching chart release.
+
+```sh
+helm upgrade --install grafana-mcp-setup oci://ghcr.io/shurshun/charts/grafana-mcp-setup \
+  --namespace observability --create-namespace --values values.yaml
+```
+
+The Kubernetes lock serializes mutations through one namespaced Lease. Its Role
+can access only that named object. Default token automount stays disabled;
+Kubernetes mode mounts a separate projected token and cluster CA. All issuers
+sharing accounts must share the lock. Keep the same flash-cookie key across pods.
+
+The chart defaults to Kubernetes locking and supports overlapping rollout pods.
+Local mode allows one replica and disables surge, causing a short interruption.
+Kubernetes may still retain a terminating old pod. Use the Lease for rollout
+coordination; replica count and surge settings do not provide a distributed lock.
+
+## systemd
+
+[The systemd guide](docs/systemd.md) provides a hardened unit, configuration,
+credential-file provisioning, proxy requirements, and restart examples. It uses
+local locking and requires exactly one issuer process for its Grafana accounts.
 
 ## Configuration
 
-Everything comes from the environment; the chart sets it all.
+| Variable | Default or requirement |
+|---|---|
+| `GRAFANA_URL` | Required backend URL |
+| `GRAFANA_PUBLIC_URL` | Required URL in generated client configurations |
+| `GRAFANA_API_MODE` | `legacy`; explicitly select `iam` for the new API |
+| `GRAFANA_NAMESPACE` | `default`; used only by `iam` |
+| `GRAFANA_ADMIN_TOKEN` / `GRAFANA_ADMIN_TOKEN_FILE` | Exactly one source |
+| `APP_PUBLIC_URL` | Required public issuer URL, separate from Grafana |
+| `OIDC_ISSUER` | Required provider issuer |
+| `OIDC_CLIENT_ID` | `grafana-mcp-setup` |
+| `ID_TOKEN_SOURCE` | `header`; `cookie` for explicit compatibility |
+| `ID_TOKEN_HEADER` | `X-Grafana-MCP-ID-Token` |
+| `ID_TOKEN_COOKIE` | `mcp_id_token` in cookie mode |
+| `REQUIRED_GROUPS` | Comma-separated exact group names |
+| `ALLOW_ALL_AUTHENTICATED_USERS` | `false` |
+| `FLASH_COOKIE_KEY` / `FLASH_COOKIE_KEY_FILE` | Exactly one source, base64-encoded 32-byte key |
+| `ROTATION_LOCK_MODE` | `local` in binary, `kubernetes` in chart |
+| `ROTATION_LEASE_NAME` | Named shared Lease in Kubernetes mode |
+| `POD_NAMESPACE` | Namespace containing the Lease |
+| `BASE_PATH` | `/setup-mcp` |
+| `TOKEN_TTL_DAYS` | `90` |
+| `LISTEN_ADDR` | `:8080` |
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `GRAFANA_URL` | — | Grafana's in-cluster address |
-| `GRAFANA_PUBLIC_URL` | — | What goes into the handed-out `.mcp.json` |
-| `GRAFANA_ADMIN_TOKEN` | — | This service's own token |
-| `OIDC_ISSUER` | — | Issuer whose JWKS verifies the ID token |
-| `OIDC_CLIENT_ID` | `grafana-mcp-setup` | Expected `aud` |
-| `REQUIRED_GROUPS` | empty | Comma-separated groups; holding any one allows a token, empty allows anyone who can sign in |
-| `ID_TOKEN_COOKIE` | `mcp_id_token` | Cookie the proxy leaves the ID token in |
-| `BASE_PATH` | `/setup-mcp` | Where the service is mounted |
-| `TOKEN_TTL_DAYS` | `90` | Lifetime of an issued token |
-| `LISTEN_ADDR` | `:8080` | Listen address |
+## Operations and tests
 
-## Two things this does not solve
-
-**Offboarding.** A Grafana service account is not tied to a user, so deleting
-the person's directory account does not revoke their token. Removing
-`mcp-<email>` is a separate step and belongs in your offboarding checklist, or
-the token outlives the person for its full lifetime.
-
-**The Admin token.** Compromising this pod means compromising Grafana admin.
-The service does exactly one thing with it, but the blast radius is what it is,
-and Grafana OSS offers no narrower role for creating service accounts.
-
-## Development
+`/healthz` checks the process. `/readyz` checks Grafana capability with a cached
+result. `/metrics` exposes operational counters without email or token labels.
+See [deployment notes](docs/deployment.md) for secret updates, NetworkPolicy,
+ServiceMonitor, and offboarding.
 
 ```sh
-go test ./...
-docker build -f Dockerfile.local -t grafana-mcp-setup:dev .
-helm template test charts/grafana-mcp-setup --set grafana.adminToken=x
+go test -race ./...
+go vet ./...
+helm lint charts/grafana-mcp-setup -f charts/grafana-mcp-setup/ci/routed-values.yaml
 ```
+
+The integration workflow runs Grafana, Envoy Gateway, a test OIDC provider, and
+browser tests. See [integration instructions](integration/README.md) for local
+execution. Never upload production secrets, token-bearing HTML, browser traces,
+or sessions as CI artifacts.
 
 ## Licence
 

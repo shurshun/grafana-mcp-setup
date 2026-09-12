@@ -1,0 +1,76 @@
+name: integration
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  oidc:
+    name: OIDC and token lifecycle (${{ matrix.api_mode }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        api_mode:
+          - legacy
+          - iam
+    env:
+      GRAFANA_API_MODE: ${{ matrix.api_mode }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Build application image
+        run: docker build -f Dockerfile.local -t grafana-mcp-setup:integration .
+
+      - uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1
+        with:
+          cluster_name: integration
+          config: integration/kind.yaml
+
+      - name: Load application image
+        run: kind load docker-image grafana-mcp-setup:integration --name integration
+
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
+        with:
+          version: v4.0.0
+
+      - name: Install Envoy Gateway 1.9.0
+        run: |
+          helm install envoy-gateway oci://docker.io/envoyproxy/gateway-helm \
+            --version v1.9.0 \
+            --namespace envoy-gateway-system \
+            --create-namespace \
+            --wait \
+            --timeout 3m
+
+      - name: Start Grafana, Keycloak, Envoy, and application
+        run: integration/bootstrap.sh
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: integration/package-lock.json
+
+      - name: Install browser test dependencies
+        working-directory: integration
+        env:
+          NPM_CONFIG_REGISTRY: https://registry.npmjs.org
+        run: |
+          npm ci --ignore-scripts
+          npx playwright install --with-deps chromium
+
+      - name: Run OIDC integration tests
+        working-directory: integration
+        run: npm test
+
+      - name: Show Kubernetes state after failure
+        if: failure()
+        run: |
+          kubectl get gateway,httproute,securitypolicy -A -o wide
+          kubectl get pods,services -A -o wide

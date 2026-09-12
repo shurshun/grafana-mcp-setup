@@ -1,0 +1,58 @@
+replicaCount: 2
+
+image:
+  repository: grafana-mcp-setup
+  tag: integration
+  pullPolicy: Never
+
+rotationLock:
+  mode: kubernetes
+  leaseName: grafana-mcp-integration
+
+appPublicURL: https://app.integration
+basePath: /setup-mcp
+
+grafana:
+  apiMode: legacy
+  namespace: default
+  url: http://grafana.integration.svc.cluster.local:3000
+  publicURL: http://grafana.integration
+  existingSecret: grafana-admin-token
+  existingSecretKey: admin-token
+
+flashCookie:
+  existingSecret: flash-cookie
+  existingSecretKey: flash-cookie-key
+
+oidc:
+  issuer: http://keycloak.integration/realms/integration
+  clientID: grafana-mcp-setup
+  requiredGroups:
+    - /grafana-mcp
+  allowAllAuthenticatedUsers: false
+  idTokenSource: header
+  idTokenHeader: X-Grafana-MCP-ID-Token
+
+httpRoute:
+  enabled: true
+  parentRefs:
+    - name: integration
+      sectionName: https
+  hostnames:
+    - app.integration
+
+securityPolicy:
+  enabled: true
+  existingSecret: oidc-client
+  existingSecretKey: client-secret
+  scopes:
+    - openid
+    - groups
+  cookieSameSite: Lax
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    memory: 128Mi

@@ -1,4 +1,7 @@
 {{- if .Values.securityPolicy.enabled }}
+{{- if ne .Values.securityPolicy.existingSecretKey "client-secret" }}
+{{- fail "Envoy Gateway requires the OIDC Secret key to be client-secret" }}
+{{- end }}
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: SecurityPolicy
 metadata:
@@ -18,7 +21,7 @@ spec:
     clientID: {{ .Values.oidc.clientID | quote }}
     clientSecret:
       name: {{ include "grafana-mcp-setup.clientSecretName" . }}
-    redirectURL: {{ printf "%s%s/oauth2/callback" .Values.grafana.publicURL (include "grafana-mcp-setup.basePath" .) | quote }}
+    redirectURL: {{ printf "%s%s/oauth2/callback" (trimSuffix "/" .Values.appPublicURL) (include "grafana-mcp-setup.basePath" .) | quote }}
     logoutPath: {{ printf "%s/logout" (include "grafana-mcp-setup.basePath" .) | quote }}
     # The groups scope is what carries oidc.requiredGroups. Drop it and the
     # provider omits the claim, so every request looks like a permissions
@@ -27,6 +30,10 @@ spec:
       {{- toYaml .Values.securityPolicy.scopes | nindent 6 }}
     cookieNames:
       idToken: {{ .Values.oidc.idTokenCookie | quote }}
+    {{- if eq .Values.oidc.idTokenSource "header" }}
+    forwardIDToken:
+      header: {{ .Values.oidc.idTokenHeader | quote }}
+    {{- end }}
     cookieConfig:
       sameSite: {{ .Values.securityPolicy.cookieSameSite | quote }}
 {{- end }}

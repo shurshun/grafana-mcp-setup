@@ -3,3 +3,6 @@
 charts
 images
 *.md
+integration/node_modules
+integration/test-results
+integration/playwright-report
