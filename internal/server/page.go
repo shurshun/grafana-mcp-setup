@@ -64,7 +64,15 @@ func (d *pageData) fillFrom(t saToken) {
 	}
 }
 
-var page = template.Must(template.New("page").Parse(`<!doctype html>
+// icons the template asks for by name, for the marks that belong to no format.
+var pageIcons = map[string]template.HTML{
+	"braces":    iconBraces,
+	"1password": iconOnePassword,
+}
+
+var page = template.Must(template.New("page").Funcs(template.FuncMap{
+	"icon": func(name string) template.HTML { return pageIcons[name] },
+}).Parse(`<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Grafana MCP token</title>
@@ -206,10 +214,29 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
 </div>
 
 {{ define "snippet" }}
-<div class="clients"{{ with .Token }} data-token="{{ . }}"{{ end }}>
-  <div class="modes" role="radiogroup" aria-label="Token storage">
-    <button type="button" class="storage-mode mode on" data-storage="inline" role="radio" aria-checked="true">Token in configuration</button>
-    <button type="button" class="storage-mode mode" data-storage="env" role="radio" aria-checked="false">1Password / env</button>
+<div class="clients" data-format="{{ (index .Formats 0).ID }}"{{ with .Token }} data-token="{{ . }}"{{ end }}>
+  <div class="toolbar">
+    <div class="modes" role="radiogroup" aria-label="Token storage">
+      <button type="button" class="storage-mode mode on" data-storage="inline" role="radio" aria-checked="true">{{ icon "braces" }}<span>Token in configuration</span></button>
+      <button type="button" class="storage-mode mode" data-storage="env" role="radio" aria-checked="false">{{ icon "1password" }}<span>1Password / env</span></button>
+    </div>
+
+    <div class="tabs" role="tablist" aria-label="Client">
+      {{ range $i, $f := .Formats }}
+        <button type="button" class="tab{{ if eq $i 0 }} on{{ end }}" data-format="{{ $f.ID }}"
+                role="tab" aria-selected="{{ if eq $i 0 }}true{{ else }}false{{ end }}">
+          {{ $f.Icon }}<span>{{ $f.Name }}</span>
+        </button>
+      {{ end }}
+    </div>
+
+    {{/* Every client offers the same three launchers, so one row drives them all. */}}
+    <div class="modes" role="radiogroup" aria-label="Launch mode">
+      {{ range $j, $v := (index .Formats 0).Variants }}
+        <button type="button" class="mode{{ if eq $j 0 }} on{{ end }}" data-mode="{{ $v.ID }}"
+                role="radio" aria-checked="{{ if eq $j 0 }}true{{ else }}false{{ end }}">{{ $v.Icon }}<span>{{ $v.Name }}</span></button>
+      {{ end }}
+    </div>
   </div>
   <div class="env-guide" hidden>
     <ol>
@@ -229,23 +256,8 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
     <p class="note">Saving to 1Password is manual. The env configuration contains no token.
     After rotation, update the Environment and restart the MCP server.</p>
   </div>
-  <div class="tabs" role="tablist" aria-label="Client">
-    {{ range $i, $f := .Formats }}
-      <button type="button" class="tab{{ if eq $i 0 }} on{{ end }}" data-format="{{ $f.ID }}"
-              role="tab" aria-selected="{{ if eq $i 0 }}true{{ else }}false{{ end }}">
-        {{ $f.Icon }}<span>{{ $f.Name }}</span>
-      </button>
-    {{ end }}
-  </div>
-
   {{ range $i, $f := .Formats }}
     <div class="panel" data-format="{{ $f.ID }}" role="tabpanel"{{ if ne $i 0 }} hidden{{ end }}>
-      <div class="modes" role="radiogroup" aria-label="Launch mode">
-        {{ range $j, $v := $f.Variants }}
-          <button type="button" class="mode{{ if eq $j 0 }} on{{ end }}" data-mode="{{ $v.ID }}"
-                  role="radio" aria-checked="{{ if eq $j 0 }}true{{ else }}false{{ end }}">{{ $v.Name }}</button>
-        {{ end }}
-      </div>
       {{ range $j, $v := $f.Variants }}
         <div class="variant" data-mode="{{ $v.ID }}"{{ if ne $j 0 }} hidden aria-hidden="true"{{ end }}>
           <div class="snippet">

@@ -97,36 +97,50 @@
 
   /* Tabs -------------------------------------------------------------- */
 
-  /* One control rather than six buttons: a tray with the segments inside it,
-     and the active one raised out of the tray. */
-  .tabs {
-    display: inline-flex; flex-wrap: wrap; gap: 2px;
-    margin-bottom: .9rem; padding: 3px;
-    border: 1px solid var(--line); border-radius: 10px;
+  /* One control rather than three rows: storage, client and launcher sit in a
+     tray together, each group separated, the active segment raised out of it. */
+  .toolbar {
+    display: flex; flex-wrap: wrap; align-items: center;
+    /* Groups sit further apart than the segments inside them, which is what
+       separates them once the row wraps and a divider would not. */
+    gap: .3rem 1.1rem;
+    margin-bottom: .9rem; padding: 4px;
+    border: 1px solid var(--line); border-radius: 12px;
     background: color-mix(in srgb, var(--ink) 5%, var(--card));
   }
-  .tab {
+  .toolbar .modes, .toolbar .tabs {
+    display: flex; flex-wrap: wrap; gap: 2px;
+    margin: 0; padding: 0; border: 0; background: none;
+  }
+
+  .tab, .mode {
     display: inline-flex; align-items: center; gap: .4rem;
     padding: .4rem .7rem; font-size: .85rem;
     border: 1px solid transparent; border-radius: 7px;
     background: transparent; color: var(--muted);
   }
-  .tab svg { color: var(--client, var(--muted)); opacity: .75; }
-  .tab:hover { color: var(--ink); }
-  .tab.on {
+  .tab svg, .mode svg { flex: none; color: var(--brand, var(--muted)); opacity: .8; }
+  .tab:hover, .mode:hover { color: var(--ink); }
+  .tab.on, .mode.on {
     color: var(--ink); background: var(--card);
-    border-color: var(--line);
+    border-color: color-mix(in srgb, var(--brand, var(--accent)) 45%, var(--line));
     box-shadow: 0 1px 2px rgba(0, 0, 0, .25);
   }
-  .tab.on svg { opacity: 1; }
+  .tab.on svg, .mode.on svg { opacity: 1; }
 
-  /* One colour per client, so the tab and the block it opens agree. */
-  [data-format="claude-code"]    { --client: #d97757; }
-  [data-format="claude-desktop"] { --client: #d97757; }
-  [data-format="codex"]          { --client: #10a37f; }
-  [data-format="cursor"]         { --client: #7c8797; }
-  [data-format="vscode"]         { --client: #3b82f6; }
-  [data-format="zed"]            { --client: #8b5cf6; }
+  /* Each client and launcher carries its own colour, taken from the brand and
+     lifted where the brand itself is too dark to read on the dark ground. */
+  .tab[data-format="claude-code"], .tab[data-format="claude-desktop"],
+  .clients[data-format="claude-code"], .clients[data-format="claude-desktop"] { --brand: #D97757; }
+  .tab[data-format="codex"], .clients[data-format="codex"]   { --brand: #10A37F; }
+  .tab[data-format="cursor"], .clients[data-format="cursor"]  { --brand: #6B7280; }
+  .tab[data-format="vscode"], .clients[data-format="vscode"]  { --brand: #007ACC; }
+  .tab[data-format="zed"], .clients[data-format="zed"]     { --brand: #084CCF; }
+  .mode[data-mode="binary"]    { --brand: #6B7280; }
+  .mode[data-mode="uvx"]       { --brand: #C13FCC; }
+  .mode[data-mode="docker"]    { --brand: #2496ED; }
+  .storage-mode[data-storage="inline"] { --brand: #6B7280; }
+  .storage-mode[data-storage="env"]    { --brand: #145FE4; }
 
   .note { margin: .7rem 0 0; color: var(--muted); font-size: .85rem; }
 
@@ -136,7 +150,7 @@
 
   .snippet {
     border: 1px solid var(--code-line); border-radius: 10px; overflow: hidden;
-    border-top: 2px solid color-mix(in srgb, var(--client, var(--accent)) 70%, transparent);
+    border-top: 2px solid color-mix(in srgb, var(--brand, var(--accent)) 70%, transparent);
   }
   .snippet-bar {
     display: flex; align-items: center; gap: .75rem;
@@ -227,4 +241,17 @@
     header { flex-wrap: wrap; }
     .chip { flex-basis: 100%; margin-left: 0; }
     .card { padding: 1.15rem; }
+  }
+
+  @media (prefers-color-scheme: dark) {
+    /* Cursor's brand is black and Zed's a deep blue, so the tray would swallow
+       them; hue is kept, lightness raised. */
+    .tab[data-format="cursor"], .clients[data-format="cursor"]  { --brand: #B9C0CB; }
+    .tab[data-format="vscode"], .clients[data-format="vscode"]  { --brand: #3DB1FF; }
+    .tab[data-format="zed"], .clients[data-format="zed"]     { --brand: #4482F8; }
+    .mode[data-mode="binary"]    { --brand: #B9C0CB; }
+    .mode[data-mode="uvx"]       { --brand: #DE5FE9; }
+    .mode[data-mode="docker"]    { --brand: #4CA9F0; }
+    .storage-mode[data-storage="inline"] { --brand: #B9C0CB; }
+    .storage-mode[data-storage="env"]    { --brand: #4D87EF; }
   }

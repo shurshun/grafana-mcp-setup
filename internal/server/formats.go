@@ -21,6 +21,7 @@ type mcpVariant struct {
 	Note    string
 	Body    template.HTML
 	EnvBody template.HTML
+	Icon    template.HTML
 }
 
 // mcpFormat is one client's way of spelling the same server: a file, a shape
@@ -47,7 +48,7 @@ func formats(publicURL, mask string) []mcpFormat {
 			File:   ".mcp.json",
 			Note:   "Project scope. <code>~/.claude.json</code> does the same for every project.",
 			Accent: "#d97757",
-			Icon:   iconSpark,
+			Icon:   iconClaude,
 			Body:   highlightJSON(mcpServersJSON("mcpServers", publicURL, false), mask),
 		},
 		{
@@ -56,7 +57,7 @@ func formats(publicURL, mask string) []mcpFormat {
 			File:   "claude_desktop_config.json",
 			Note:   "Settings → Developer → Edit Config.",
 			Accent: "#d97757",
-			Icon:   iconWindow,
+			Icon:   iconClaude,
 			Body:   highlightJSON(mcpServersJSON("mcpServers", publicURL, false), mask),
 		},
 		{
@@ -91,7 +92,7 @@ func formats(publicURL, mask string) []mcpFormat {
 			File:   "settings.json",
 			Note:   "Zed nests the command in an object of its own.",
 			Accent: "#8b5cf6",
-			Icon:   iconZ,
+			Icon:   iconZed,
 			Body:   highlightJSON(zedJSON(publicURL), mask),
 		},
 	}
@@ -101,10 +102,13 @@ func formats(publicURL, mask string) []mcpFormat {
 			switch mode {
 			case "binary":
 				v.Name, v.Note = "Installed binary", "Install mcp-grafana "+mcpVersion+" and make it available in PATH."
+				v.Icon = iconChip
 			case "uvx":
 				v.Name, v.Note = "uvx", "Requires uv. Downloads mcp-grafana "+mcpVersion+"."
+				v.Icon = iconUV
 			case "docker":
 				v.Name, v.Note = "Docker", "Requires Docker. The container must be able to reach the Grafana URL."
+				v.Icon = iconDocker
 			}
 			switch out[i].ID {
 			case "codex":
