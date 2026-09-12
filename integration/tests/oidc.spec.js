@@ -278,9 +278,9 @@ test('Envoy authenticates with OIDC and forwards a verified ID token', async ({ 
   const firstWorks = await grafana('/api/org', `Bearer ${firstToken}`);
   expect(firstWorks.status).toBe(200);
 
-  const copy = page.locator('.variant:not([hidden]) .copy').first();
+  const copy = page.locator('.panel:not([hidden]) .variant:not([hidden]) .copy').first();
   await copy.click();
-  const revealed = await page.locator('.variant:not([hidden]) .tok').first().textContent();
+  const revealed = await page.locator('.panel:not([hidden]) .variant:not([hidden]) .tok').first().textContent();
   if (revealed !== firstToken) throw new Error('clipboard fallback did not reveal the token');
   await copy.click();
   const tokenRemainsInDOM = await page.locator('.tok').evaluateAll(
