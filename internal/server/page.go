@@ -199,7 +199,7 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
 
   .note { margin: .7rem 0 0; color: var(--muted); font-size: .85rem; }
 
-  .modes { display: flex; gap: .4rem; margin: 0 0 .7rem; }
+  .modes { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0 0 .7rem; }
   .mode { padding: .3rem .65rem; font-size: .8rem; }
   .mode.on { border-color: var(--accent); color: var(--ink); }
 
@@ -444,6 +444,28 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
 
 {{ define "snippet" }}
 <div class="clients"{{ with .Token }} data-token="{{ . }}"{{ end }}>
+  <div class="modes" role="radiogroup" aria-label="Token storage">
+    <button type="button" class="storage-mode mode on" data-storage="inline" role="radio" aria-checked="true">Token in configuration</button>
+    <button type="button" class="storage-mode mode" data-storage="env" role="radio" aria-checked="false">1Password / env</button>
+  </div>
+  <div class="env-guide" hidden>
+    <ol>
+      <li>Save the token as <code>GRAFANA_SERVICE_ACCOUNT_TOKEN</code> in your 1Password Environment.</li>
+      <li>Mount it as <code>.env</code> in your project. Keep your existing direnv setup,
+      or add <code>dotenv .env</code> to <code>.envrc</code>, review it, and run <code>direnv allow</code>.</li>
+      <li>Replace <code>/Users/example/work/project</code> below with your project directory.
+      Install direnv and the selected launcher. Use absolute executable paths if your client cannot find them.</li>
+    </ol>
+    <div class="snippet">
+      <div class="snippet-bar">
+        <span class="filename">GRAFANA_SERVICE_ACCOUNT_TOKEN</span>
+        <button type="button" class="copy"><span class="label">Copy token</span></button>
+      </div>
+      <pre><span class="tok">{{ .Mask }}</span></pre>
+    </div>
+    <p class="note">Saving to 1Password is manual. The env configuration contains no token.
+    After rotation, update the Environment and restart the MCP server.</p>
+  </div>
   <div class="tabs" role="tablist" aria-label="Client">
     {{ range $i, $f := .Formats }}
       <button type="button" class="tab{{ if eq $i 0 }} on{{ end }}" data-format="{{ $f.ID }}"
@@ -475,12 +497,14 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
                 <span class="label">Copy</span>
               </button>
             </div>
-            <pre>{{ $v.Body }}</pre>
+            <pre class="storage" data-storage="inline">{{ $v.Body }}</pre>
+            <pre class="storage" data-storage="env" hidden>{{ $v.EnvBody }}</pre>
           </div>
           <p class="note">{{ $v.Note }}</p>
         </div>
       {{ end }}
       {{ with $f.Note }}<p class="note">{{ . }}</p>{{ end }}
+
     </div>
   {{ end }}
 
@@ -489,9 +513,10 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
   <script nonce="{{ .CSPNonce }}">
     const clients = document.querySelector(".clients");
     let token = clients.dataset.token;
+    let tokenCopied = false;
     const tabs = [...document.querySelectorAll(".tab")];
     const panels = [...document.querySelectorAll(".panel")];
-	const modeButtons = [...document.querySelectorAll(".mode")];
+	const modeButtons = [...document.querySelectorAll(".mode[data-mode]")];
 	const variants = [...document.querySelectorAll(".variant")];
 
     function show(id) {
@@ -533,35 +558,58 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
 	  if (savedMode) showMode(savedMode);
     } catch {}
 
+    let storage = "inline";
+    document.querySelectorAll(".storage-mode").forEach((button) => {
+      button.addEventListener("click", () => {
+        storage = button.dataset.storage;
+        document.querySelectorAll(".storage-mode").forEach((item) => {
+          const on = item.dataset.storage === storage;
+          item.classList.toggle("on", on);
+          item.setAttribute("aria-checked", on);
+        });
+        document.querySelectorAll(".storage").forEach((pre) => { pre.hidden = pre.dataset.storage !== storage; });
+        document.querySelector(".env-guide").hidden = storage !== "env";
+        document.querySelectorAll(".copy").forEach((copy) => {
+          const pre = copy.closest(".snippet").querySelector("pre:not([hidden])");
+          copy.disabled = tokenCopied && !!pre.querySelector(".tok");
+        });
+      });
+    });
+
     document.querySelectorAll(".copy").forEach((copy) => {
-	  const variant = copy.closest(".variant");
-	  const snippet = variant.querySelector("pre");
-	  const masked = variant.querySelector(".tok");
+
+      const block = copy.closest(".snippet");
       const label = copy.querySelector(".label");
+      const originalLabel = label.textContent;
 
       copy.addEventListener("click", async () => {
+        const snippet = block.querySelector("pre:not([hidden])");
+        const masked = snippet.querySelector(".tok");
         // A function replacement keeps $-sequences in the token literal.
-        const real = token
+        const real = token && masked
           ? snippet.textContent.replace(masked.textContent, () => token)
           : snippet.textContent;
         try {
           await navigator.clipboard.writeText(real);
           label.textContent = "Copied";
           copy.classList.add("ok");
-          if (token) {
+          if (token && masked) {
+            tokenCopied = true;
             token = "";
             delete clients.dataset.token;
             document.querySelectorAll(".tok").forEach((node) => { node.textContent = "[token copied]"; });
-            document.querySelectorAll(".copy").forEach((button) => { button.disabled = true; });
+            document.querySelectorAll(".copy").forEach((button) => {
+              if (button.closest(".snippet").querySelector("pre:not([hidden]) .tok")) button.disabled = true;
+            });
           }
         } catch {
           // Clipboard access can be refused. Unmask first, or a hand-made
           // selection copies the asterisks.
-          if (token) masked.textContent = token;
+          if (token && masked) masked.textContent = token;
           getSelection().selectAllChildren(snippet);
           label.textContent = "Press Ctrl/Cmd+C";
         }
-        setTimeout(() => { label.textContent = "Copy"; copy.classList.remove("ok"); }, 2000);
+        setTimeout(() => { label.textContent = originalLabel; copy.classList.remove("ok"); }, 2000);
       });
     });
   </script>

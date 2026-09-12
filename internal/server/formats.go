@@ -16,10 +16,11 @@ const tokenSentinel = "__GRAFANA_MCP_TOKEN__"
 const mcpVersion = "1.4.1"
 
 type mcpVariant struct {
-	ID   string
-	Name string
-	Note string
-	Body template.HTML
+	ID      string
+	Name    string
+	Note    string
+	Body    template.HTML
+	EnvBody template.HTML
 }
 
 // mcpFormat is one client's way of spelling the same server: a file, a shape
@@ -108,12 +109,16 @@ func formats(publicURL, mask string) []mcpFormat {
 			switch out[i].ID {
 			case "codex":
 				v.Body = highlightTOML(codexTOML(publicURL, mode), mask)
+				v.EnvBody = highlightTOML(codexTOML(publicURL, mode, "env"), mask)
 			case "zed":
 				v.Body = highlightJSON(zedJSON(publicURL, mode), mask)
+				v.EnvBody = highlightJSON(zedJSON(publicURL, mode, "env"), mask)
 			case "vscode":
 				v.Body = highlightJSON(mcpServersJSON("servers", publicURL, true, mode), mask)
+				v.EnvBody = highlightJSON(mcpServersJSON("servers", publicURL, true, mode, "env"), mask)
 			default:
 				v.Body = highlightJSON(mcpServersJSON("mcpServers", publicURL, false, mode), mask)
+				v.EnvBody = highlightJSON(mcpServersJSON("mcpServers", publicURL, false, mode, "env"), mask)
 			}
 			out[i].Variants = append(out[i].Variants, v)
 		}
@@ -135,12 +140,16 @@ func launchCommand(modes ...string) (string, []string) {
 		command = "docker"
 		args = append([]string{"run", "--rm", "-i", "-e", "GRAFANA_URL", "-e", "GRAFANA_SERVICE_ACCOUNT_TOKEN", "grafana/mcp-grafana:" + mcpVersion}, args...)
 	}
+	if len(modes) > 1 && modes[1] == "env" {
+		args = append([]string{"exec", "/Users/example/work/project", command}, args...)
+		command = "direnv"
+	}
 	return command, args
 }
 
 func mcpServersJSON(key, publicURL string, withType bool, mode ...string) string {
 	command, args := launchCommand(mode...)
-	server := stdioServerJSON{Command: command, Args: args, Env: grafanaEnvJSON{URL: publicURL, Token: tokenSentinel}}
+	server := stdioServerJSON{Command: command, Args: args, Env: grafanaEnvJSON{URL: publicURL, Token: configToken(mode)}}
 	if withType {
 		server.Type = "stdio"
 	}
@@ -161,25 +170,35 @@ func zedJSON(publicURL string, mode ...string) string {
 	root.ContextServers.Grafana.Command = zedCommandJSON{
 		Path: command,
 		Args: args,
-		Env:  grafanaEnvJSON{URL: publicURL, Token: tokenSentinel},
+		Env:  grafanaEnvJSON{URL: publicURL, Token: configToken(mode)},
 	}
 	return marshalPrettyJSON(root)
 }
 
 func codexTOML(publicURL string, mode ...string) string {
 	command, args := launchCommand(mode...)
+	tokenLine := ""
+	if token := configToken(mode); token != "" {
+		tokenLine = "\nGRAFANA_SERVICE_ACCOUNT_TOKEN = " + jsonString(token)
+	}
 	return fmt.Sprintf(`[mcp_servers.grafana]
 command = %s
 args = %s
 
 [mcp_servers.grafana.env]
-GRAFANA_URL = %s
-GRAFANA_SERVICE_ACCOUNT_TOKEN = %s`, jsonString(command), tomlStringArray(args), jsonString(publicURL), jsonString(tokenSentinel))
+GRAFANA_URL = %s%s`, jsonString(command), tomlStringArray(args), jsonString(publicURL), tokenLine)
+}
+
+func configToken(mode []string) string {
+	if len(mode) > 1 && mode[1] == "env" {
+		return ""
+	}
+	return tokenSentinel
 }
 
 type grafanaEnvJSON struct {
 	URL   string `json:"GRAFANA_URL"`
-	Token string `json:"GRAFANA_SERVICE_ACCOUNT_TOKEN"`
+	Token string `json:"GRAFANA_SERVICE_ACCOUNT_TOKEN,omitempty"`
 }
 
 type stdioServerJSON struct {

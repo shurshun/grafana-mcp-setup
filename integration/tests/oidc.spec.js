@@ -270,8 +270,27 @@ test('Envoy authenticates with OIDC and forwards a verified ID token', async ({ 
   if (tokenRemainsInDOM) throw new Error('successful copy left the token in the DOM');
   expect(await page.locator('.copy').evaluateAll((buttons) => buttons.every((button) => button.disabled))).toBe(true);
 
+  await page.getByRole('radio', { name: '1Password / env', exact: true }).click();
+  for (const client of ['Claude Code', 'Claude Desktop', 'Codex', 'Cursor', 'VS Code', 'Zed']) {
+    await page.getByRole('tab', { name: client, exact: true }).click();
+    for (const mode of ['Installed binary', 'uvx', 'Docker']) {
+      await page.getByRole('radio', { name: mode, exact: true }).click();
+      const config = page.locator('.panel:not([hidden]) .variant:not([hidden]) pre:not([hidden])');
+      const text = await config.textContent();
+      expect(text).toContain('/Users/example/work/project');
+      expect(text).toContain('--disable-write');
+      if (text.includes(firstToken) || text.includes('glsa_')) throw new Error('env config contains token');
+      await expect(page.locator('.panel:not([hidden]) .variant:not([hidden]) .copy')).toBeEnabled();
+    }
+  }
+  await page.locator('.panel:not([hidden]) .variant:not([hidden]) .copy').click();
+  await expect(page.locator('.env-guide .copy')).toBeDisabled();
+
   await page.reload();
   expect(await issuedToken(page)).toBeNull();
+  await page.getByRole('radio', { name: '1Password / env', exact: true }).click();
+  await page.getByRole('radio', { name: 'Token in configuration', exact: true }).click();
+  await expect(page.locator('.panel:not([hidden]) .variant:not([hidden]) .copy')).toBeEnabled();
 
   await page.getByRole('button', { name: 'Issue a new token' }).click();
   await page.getByRole('button', { name: 'Yes, replace it' }).click();
