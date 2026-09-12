@@ -69,39 +69,31 @@ Even a one-replica, zero-surge Kubernetes Deployment can retain a terminating
 old pod while its replacement starts. Local mode is intended for a single
 systemd process or isolated development, not overlapping Kubernetes rollouts.
 
-The chart creates one Lease. If multiple Helm releases need to share accounts,
-one owner must provision the Lease and other releases must set
-`rotationLock.createLease=false`. Separate namespaces with identically named Leases do not
-coordinate each other.
+The issuer creates a missing Lease during readiness or lock acquisition.
+Concurrent creators re-read the Lease after a conflict and preserve its owner.
+Renewal never recreates a deleted Lease, so a holder loses its lock safely.
+Issuers sharing Grafana accounts must use the same namespace and Lease name.
+Separate namespaces with identically named Leases do not coordinate each other.
 
-The Lease's `spec` belongs to the running issuer. GitOps reconciliation must
-preserve it. For Argo CD, merge this fragment into the owning Application and
-adjust the exact namespace and Lease name. Preserve existing sync options.
+For Argo CD, set `rotationLock.createLease=false`. Argo CD installs the
+application and RBAC; the issuer manages the runtime Lease. No CI bootstrap or
+Argo CD resource-exclusion override is needed. This follows the
+[ingress-nginx RBAC pattern](https://kubernetes.github.io/ingress-nginx/deploy/rbac/).
+The Role grants namespaced Lease creation and restricts get/update/patch to the
+configured Lease name. Kubernetes cannot restrict create by `resourceNames`.
 
-```yaml
-spec:
-  ignoreDifferences:
-    - group: coordination.k8s.io
-      kind: Lease
-      namespace: observability
-      name: grafana-mcp-rotation
-      jsonPointers:
-        - /spec
-  syncPolicy:
-    syncOptions:
-      - RespectIgnoreDifferences=true
-```
+The chart retains `rotationLock.createLease=true` by default so a Helm upgrade
+does not prune an existing Helm-owned Lease. Preserve that object before changing
+an existing Helm installation to runtime ownership. Do not set this flag to true
+with Argo CD, which excludes Lease resources internally.
 
-Argo CD otherwise uses ignored fields only when comparing resources; the sync
-option also preserves them during apply. See its
-[sync documentation](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/#respect-ignore-differences-configs).
 Avoid force-replacing or deleting an active Lease. The issuer preserves the
 Lease's labels, annotations, finalizers, and owner references when renewing it.
 
 ## Secret updates
 
-Use an existing secret manager to provision Admin, OIDC, and flash-cookie
-credentials. The chart adds a checksum for chart-managed Secrets. For externally
+Supply Admin, OIDC, and flash-cookie credentials in values, or reference existing
+Secrets. The chart adds a checksum for chart-managed Secrets. For externally
 managed Secrets, configure your existing restart controller or perform a rolling
 restart after the secret manager updates the resource. The app reads environment
 credentials on startup.

@@ -92,6 +92,12 @@ jobs:
 
       - name: Check replica and lock invariants
         run: |
+          if helm template test charts/grafana-mcp-setup \
+            --values charts/grafana-mcp-setup/ci/routed-values.yaml \
+            --set-string rotationLock.createLease=false >/dev/null 2>&1; then
+            echo 'string createLease unexpectedly accepted' >&2
+            exit 1
+          fi
           helm template test charts/grafana-mcp-setup \
             --values charts/grafana-mcp-setup/ci/routed-values.yaml \
             --set replicaCount=2 \

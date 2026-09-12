@@ -77,14 +77,83 @@ func (f *fakeLeaseAPI) handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func testLeaseLocker(t *testing.T, api *fakeLeaseAPI, pod string) *leaseLocker {
+	return testLeaseHandler(t, api.handler, pod)
+}
+
+func testLeaseHandler(t *testing.T, handler http.HandlerFunc, pod string) *leaseLocker {
 	t.Helper()
 	tokenFile := filepath.Join(t.TempDir(), "token")
 	if err := os.WriteFile(tokenFile, []byte("projected\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ts := httptest.NewServer(http.HandlerFunc(api.handler))
+	ts := httptest.NewServer(handler)
 	t.Cleanup(ts.Close)
 	return &leaseLocker{client: ts.Client(), baseURL: ts.URL, leaseName: "rotation", namespace: "default", podName: pod, tokenFile: tokenFile, leaseDuration: 2 * time.Second, now: time.Now}
+}
+
+func TestLeaseInitialization(t *testing.T) {
+	for _, tc := range []struct {
+		name                    string
+		getStatus, createStatus int
+		create, wantError       bool
+		wantPosts               int
+	}{
+		{"missing", 404, 201, true, false, 1},
+		{"concurrent creator", 404, 409, true, false, 1},
+		{"existing", 200, 0, true, false, 0},
+		{"read forbidden", 403, 0, true, true, 0},
+		{"read unavailable", 500, 0, true, true, 0},
+		{"create forbidden", 404, 403, true, true, 1},
+		{"renew missing", 404, 0, false, true, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			posts := 0
+			locker := testLeaseHandler(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("Authorization") != "Bearer projected" {
+					t.Error("missing projected token")
+				}
+				switch r.Method {
+				case http.MethodGet:
+					if r.URL.Path != "/apis/coordination.k8s.io/v1/namespaces/default/leases/rotation" {
+						t.Errorf("unexpected GET path %s", r.URL.Path)
+					}
+					if posts == 0 && tc.getStatus != 200 {
+						w.WriteHeader(tc.getStatus)
+						return
+					}
+					_, _ = w.Write([]byte(`{"metadata":{"name":"rotation","resourceVersion":"7"},"spec":{"holderIdentity":"other-pod"}}`))
+				case http.MethodPost:
+					posts++
+					if r.URL.Path != "/apis/coordination.k8s.io/v1/namespaces/default/leases" {
+						t.Errorf("unexpected POST path %s", r.URL.Path)
+					}
+					var body struct {
+						APIVersion string            `json:"apiVersion"`
+						Kind       string            `json:"kind"`
+						Metadata   map[string]string `json:"metadata"`
+						Spec       map[string]any    `json:"spec"`
+					}
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+						t.Error(err)
+					}
+					if body.APIVersion != "coordination.k8s.io/v1" || body.Kind != "Lease" || body.Metadata["name"] != "rotation" || body.Metadata["namespace"] != "default" || len(body.Spec) != 0 {
+						t.Errorf("invalid initial Lease: %+v", body)
+					}
+					w.WriteHeader(tc.createStatus)
+				default:
+					t.Errorf("initialization must not mutate an existing Lease: %s", r.Method)
+					w.WriteHeader(http.StatusMethodNotAllowed)
+				}
+			}, "pod-one")
+			lease, err := locker.readLease(context.Background(), tc.create)
+			if (err != nil) != tc.wantError || posts != tc.wantPosts {
+				t.Fatalf("err=%v, POSTs=%d; want error=%v, POSTs=%d", err, posts, tc.wantError, tc.wantPosts)
+			}
+			if err == nil && (lease.Spec.HolderIdentity != "other-pod" || lease.Metadata.ResourceVersion != "7") {
+				t.Fatal("did not preserve the existing Lease returned by Kubernetes")
+			}
+		})
+	}
 }
 
 func TestKubernetesLeaseSerializesPodsAndDetectsLoss(t *testing.T) {

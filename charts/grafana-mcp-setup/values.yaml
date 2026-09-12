@@ -14,6 +14,8 @@ rotationLock:
   mode: kubernetes
   # All deployments sharing the same Grafana organization must share this Lease.
   leaseName: grafana-mcp-rotation
+  # Retain existing Helm-owned Leases on upgrade. Set false for Argo CD;
+  # the application creates a missing Lease itself.
   createLease: true
 
 appPublicURL: https://grafana.example.com
