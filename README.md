@@ -97,17 +97,7 @@ from the client's container; `localhost` inside it refers to that container.
 
 ## Kubernetes
 
-Provision existing Secrets through your secret manager before installing.
-
-| Secret | Key | Purpose |
-|---|---|---|
-| `mcp-grafana-admin` | `admin-token` | Grafana Admin service-account token |
-| `mcp-oidc` | `client-secret` | OIDC client secret |
-| `mcp-flash` | `flash-cookie-key` | Persistent base64-encoded random 32-byte key |
-
-Use External Secrets, SOPS, Sealed Secrets, or your existing provisioning tool.
-Inline secret values are development-only because Helm retains release values.
-Do not pass production credentials through `--set`.
+Set credentials in `values.yaml`. The chart creates the Kubernetes Secrets.
 
 ```yaml
 appPublicURL: https://mcp.example.com
@@ -116,9 +106,9 @@ grafana:
   url: http://grafana.observability.svc
   publicURL: https://grafana.example.com
   namespace: default
-  existingSecret: mcp-grafana-admin
+  adminToken: "<Grafana Admin service-account token>"
 flashCookie:
-  existingSecret: mcp-flash
+  key: "<base64-encoded random 32-byte key>"
 oidc:
   issuer: https://idp.example.com
   requiredGroups: [/grafana-mcp]
@@ -136,8 +126,13 @@ httpRoute:
   hostnames: [mcp.example.com]
 securityPolicy:
   enabled: true
-  existingSecret: mcp-oidc
+  clientSecret: "<OIDC client secret>"
 ```
+
+Use one persistent flash-cookie key, for example from `openssl rand -base64 32`.
+If you already manage Secrets separately, set `grafana.existingSecret`,
+`flashCookie.existingSecret`, and `securityPolicy.existingSecret` instead of the
+corresponding inline values.
 
 Register `https://mcp.example.com/setup-mcp/oauth2/callback` with the provider.
 Save as `values.yaml`, then install the matching chart release.

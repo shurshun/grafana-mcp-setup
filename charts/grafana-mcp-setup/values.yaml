@@ -20,7 +20,7 @@ appPublicURL: https://grafana.example.com
 flashCookie:
   existingSecret: ""
   existingSecretKey: flash-cookie-key
-  # Development only. Supply a base64-encoded 32-byte key.
+  # Supply a persistent base64-encoded random 32-byte key.
   key: ""
 
 # Where the service is mounted. The proxy in front of it authenticates this
@@ -36,8 +36,7 @@ grafana:
   url: http://grafana.monitoring.svc
   # Goes into the .mcp.json the page hands out.
   publicURL: https://grafana.example.com
-  # Production installations should use existingSecret. Inline values are
-  # development-only because Helm stores them in release metadata.
+  # The chart creates a Secret from adminToken; existingSecret is optional.
   adminToken: ""
   existingSecret: ""
   existingSecretKey: admin-token
