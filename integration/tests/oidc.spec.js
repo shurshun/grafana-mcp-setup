@@ -1,10 +1,22 @@
 const http = require('node:http');
 const https = require('node:https');
+const fs = require('node:fs/promises');
+const path = require('node:path');
 const { execFileSync, spawn } = require('node:child_process');
 const { expect, test } = require('@playwright/test');
 
 const APP_URL = 'https://app.integration/setup-mcp';
 const GRAFANA_API_MODE = process.env.GRAFANA_API_MODE || 'legacy';
+
+async function readmeScreenshot(page, name) {
+  const directory = process.env.README_SCREENSHOT_DIR;
+  if (!directory) return;
+  if ((await page.locator('body').innerText()).includes('glsa_')) {
+    throw new Error('refusing to capture a visible token');
+  }
+  await fs.mkdir(directory, { recursive: true });
+  await page.screenshot({ path: path.join(directory, `${name}.png`), fullPage: true });
+}
 
 if (!['legacy', 'iam'].includes(GRAFANA_API_MODE)) {
   throw new Error('GRAFANA_API_MODE must be legacy or iam');
@@ -188,6 +200,8 @@ test('Envoy authenticates with OIDC and forwards a verified ID token', async ({ 
   expect(unauthenticated.headers.location).toContain('keycloak.integration');
 
   const context = await browser.newContext({
+    viewport: { width: 1000, height: 800 },
+    colorScheme: 'light',
     permissions: ['clipboard-read', 'clipboard-write'],
     extraHTTPHeaders: { 'X-Grafana-MCP-ID-Token': 'forged' },
   });
@@ -207,6 +221,7 @@ test('Envoy authenticates with OIDC and forwards a verified ID token', async ({ 
   await login(page, 'allowed', 'allowed-password');
   await expect(page).toHaveURL(APP_URL);
   await expect(page.getByText('allowed@example.com')).toBeVisible();
+  await readmeScreenshot(page, 'landing');
 
   const cookies = await context.cookies('https://app.integration');
   const cookieHeader = cookies.map(({ name, value }) => `${name}=${value}`).join('; ');
@@ -254,13 +269,18 @@ test('Envoy authenticates with OIDC and forwards a verified ID token', async ({ 
   await expect(page).toHaveURL(`${APP_URL}/token`);
   const firstToken = await issuedToken(page);
   assertGrafanaToken(firstToken);
+  await page.getByRole('tab', { name: 'Codex', exact: true }).click();
+  await readmeScreenshot(page, 'token');
+  await page.getByRole('radio', { name: '1Password / env', exact: true }).click();
+  await readmeScreenshot(page, 'environment');
+  await page.getByRole('radio', { name: 'Token in configuration', exact: true }).click();
 
   const firstWorks = await grafana('/api/org', `Bearer ${firstToken}`);
   expect(firstWorks.status).toBe(200);
 
-  const copy = page.locator('.variant:not([hidden]) .copy').first();
+  const copy = page.locator('.panel:not([hidden]) .variant:not([hidden]) .copy').first();
   await copy.click();
-  const revealed = await page.locator('.variant:not([hidden]) .tok').first().textContent();
+  const revealed = await page.locator('.panel:not([hidden]) .variant:not([hidden]) .tok').first().textContent();
   if (revealed !== firstToken) throw new Error('clipboard fallback did not reveal the token');
   await copy.click();
   const tokenRemainsInDOM = await page.locator('.tok').evaluateAll(
@@ -291,6 +311,9 @@ test('Envoy authenticates with OIDC and forwards a verified ID token', async ({ 
   await page.getByRole('radio', { name: '1Password / env', exact: true }).click();
   await page.getByRole('radio', { name: 'Token in configuration', exact: true }).click();
   await expect(page.locator('.panel:not([hidden]) .variant:not([hidden]) .copy')).toBeEnabled();
+  await page.getByRole('tab', { name: 'Codex', exact: true }).click();
+  await page.getByRole('radio', { name: 'Installed binary', exact: true }).click();
+  await readmeScreenshot(page, 'status');
 
   await page.getByRole('button', { name: 'Issue a new token' }).click();
   await page.getByRole('button', { name: 'Yes, replace it' }).click();
