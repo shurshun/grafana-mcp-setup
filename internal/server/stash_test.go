@@ -1,51 +1,68 @@
 package server
 
 import (
+	"bytes"
 	"testing"
 	"time"
 )
 
-func TestStashHandsTheSecretOverExactlyOnce(t *testing.T) {
-	s := newStash()
-
-	id, err := s.put("someone@example.com", "glsa_secret")
+func testFlash(t *testing.T) *flashCodec {
+	t.Helper()
+	c, err := newFlashCodec(bytes.Repeat([]byte{7}, 32), 5*time.Minute, "/setup-mcp")
 	if err != nil {
-		t.Fatalf("put: %v", err)
+		t.Fatal(err)
 	}
+	return c
+}
 
-	got, ok := s.take(id, "someone@example.com")
-	if !ok || got != "glsa_secret" {
-		t.Fatalf("take = %q, %v; want the secret", got, ok)
+func TestFlashCookieEncryptsAndBindsTheSecret(t *testing.T) {
+	c := testFlash(t)
+	sealed, err := c.seal("someone@example.com", "glsa_secret")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, ok := s.take(id, "someone@example.com"); ok {
-		t.Error("the same link handed the secret over twice")
+	if bytes.Contains([]byte(sealed), []byte("glsa_secret")) {
+		t.Fatal("sealed cookie contains the plaintext token")
+	}
+	got, err := c.open(sealed, "someone@example.com")
+	if err != nil || got.Token != "glsa_secret" {
+		t.Fatalf("open = %#v, %v", got, err)
+	}
+	if _, err := c.open(sealed, "nobody@example.com"); err == nil {
+		t.Fatal("another identity opened the cookie")
 	}
 }
 
-func TestStashRefusesAnotherPerson(t *testing.T) {
-	s := newStash()
-	id, _ := s.put("someone@example.com", "glsa_secret")
-
-	if _, ok := s.take(id, "nobody@example.com"); ok {
-		t.Error("a stranger took the secret")
+func TestFlashCookieExpiresServerSide(t *testing.T) {
+	c := testFlash(t)
+	now := time.Unix(1_700_000_000, 0)
+	c.now = func() time.Time { return now }
+	sealed, err := c.seal("someone@example.com", "glsa_secret")
+	if err != nil {
+		t.Fatal(err)
 	}
-	// The attempt burns the id rather than leaving it to be retried.
-	if _, ok := s.take(id, "someone@example.com"); ok {
-		t.Error("the id survived a failed attempt")
+	c.now = func() time.Time { return now.Add(5 * time.Minute) }
+	if _, err := c.open(sealed, "someone@example.com"); err == nil {
+		t.Fatal("expired cookie opened")
 	}
 }
 
-func TestStashForgetsStaleSecrets(t *testing.T) {
-	s := newStash()
-	id, _ := s.put("someone@example.com", "glsa_secret")
-
-	s.mu.Lock()
-	v := s.items[id]
-	v.until = time.Now().Add(-time.Second)
-	s.items[id] = v
-	s.mu.Unlock()
-
-	if _, ok := s.take(id, "someone@example.com"); ok {
-		t.Error("an expired secret was still handed over")
+func TestCSRFTokenBindsIdentityAndExpiry(t *testing.T) {
+	c := testFlash(t)
+	now := time.Unix(1_700_000_000, 0)
+	c.now = func() time.Time { return now }
+	token, err := c.csrf("someone@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.validateCSRF(token, "someone@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.validateCSRF(token, "nobody@example.com"); err == nil {
+		t.Fatal("CSRF token accepted for another identity")
+	}
+	c.now = func() time.Time { return now.Add(5 * time.Minute) }
+	if err := c.validateCSRF(token, "someone@example.com"); err == nil {
+		t.Fatal("expired CSRF token accepted")
 	}
 }

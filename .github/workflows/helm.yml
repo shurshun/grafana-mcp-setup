@@ -1,6 +1,7 @@
 name: helm
 
 on:
+  workflow_call:
   push:
     branches:
       - master
@@ -13,7 +14,7 @@ on:
       - '.github/workflows/helm.yml'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: chart-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -23,20 +24,24 @@ jobs:
   chart:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
+        with:
+          version: v4.0.0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.x'
 
-      - uses: helm/chart-testing-action@v2
+      - uses: helm/chart-testing-action@6ec842c01de15ebb84c8627d2744a0c2f2755c9f # v2
 
       - name: Lint chart
-        run: ct lint --charts charts/grafana-mcp-setup --validate-maintainers=false
+        # The release tag supplies chart and app versions during packaging.
+        run: ct lint --charts charts/grafana-mcp-setup --validate-maintainers=false --check-version-increment=false
 
       - name: Template chart
         # Every optional path at once, so the Gateway API and Envoy Gateway
@@ -54,52 +59,47 @@ jobs:
           --set securityPolicy.clientSecret=ci-not-a-real-secret
           > rendered.yaml
 
-      - name: Validate rendered manifests
-        uses: docker://ghcr.io/yannh/kubeconform:latest
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          args: >-
-            -strict -summary
-            -schema-location default
-            -schema-location https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json
+          go-version: '1.27.1'
+          cache: false
+
+      - name: Validate rendered manifests
+        run: |
+          go install github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0
+          kubeconform \
+            -strict \
+            -summary \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/ad3b08c5045129d7bb1eeffd8e61719b2c8dd1e2/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
             rendered.yaml
 
-  install:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      - name: Build a local image for the install test
-        run: docker build -f Dockerfile.local -t grafana-mcp-setup:ci-test .
-
-      - uses: helm/kind-action@v1
-        with:
-          cluster_name: chart-testing
-
-      - name: Load the local image into kind
-        run: kind load docker-image grafana-mcp-setup:ci-test --name chart-testing
-
-      - uses: azure/setup-helm@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.x'
-
-      - uses: helm/chart-testing-action@v2
-
-      - name: Serve an OIDC discovery document for the install to find
-        # The service resolves its issuer at startup and exits if it cannot, so
-        # without this the pod crash-loops and the install below waits for a
-        # readiness that can never arrive.
+      - name: Check API modes
         run: |
-          kubectl apply -f charts/grafana-mcp-setup/ci/fake-idp.yaml
-          kubectl rollout status deployment/fake-idp --timeout 120s
+          for mode in legacy iam; do
+            helm template test charts/grafana-mcp-setup \
+              --values charts/grafana-mcp-setup/ci/routed-values.yaml \
+              --set grafana.apiMode="$mode" > "rendered-$mode.yaml"
+            grep -A1 'name: GRAFANA_API_MODE' "rendered-$mode.yaml" | grep -F "value: \"$mode\""
+          done
+          grep -A1 'name: GRAFANA_API_MODE' rendered.yaml | grep -F 'value: "legacy"'
+          if helm template test charts/grafana-mcp-setup \
+            --values charts/grafana-mcp-setup/ci/routed-values.yaml \
+            --set grafana.apiMode=auto >/dev/null 2>&1; then
+            echo 'unsupported API mode unexpectedly accepted' >&2
+            exit 1
+          fi
 
-      - name: Install the chart into kind
-        # ct-values.yaml points image.* at the image built and kind-loaded
-        # above, so this does not depend on a published release existing.
-        run: ct install --charts charts/grafana-mcp-setup --helm-extra-args "--timeout 120s"
-
-      - name: Show what landed
-        run: kubectl get all -A -l app.kubernetes.io/name=grafana-mcp-setup
+      - name: Check replica and lock invariants
+        run: |
+          helm template test charts/grafana-mcp-setup \
+            --values charts/grafana-mcp-setup/ci/routed-values.yaml \
+            --set replicaCount=2 \
+            --set rotationLock.mode=kubernetes >/dev/null
+          if helm template test charts/grafana-mcp-setup \
+            --values charts/grafana-mcp-setup/ci/routed-values.yaml \
+            --set replicaCount=2 \
+            --set rotationLock.mode=local >/dev/null 2>&1; then
+            echo 'local lock unexpectedly accepted replicaCount=2' >&2
+            exit 1
+          fi

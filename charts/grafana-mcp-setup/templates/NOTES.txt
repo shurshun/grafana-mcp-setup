@@ -1,4 +1,10 @@
-{{ .Chart.Name }} is serving {{ include "grafana-mcp-setup.basePath" . }} on {{ .Values.grafana.publicURL }}.
+{{ .Chart.Name }} is serving {{ include "grafana-mcp-setup.basePath" . }} on {{ .Values.appPublicURL | trimSuffix "/" }}.
+
+Grafana API mode is {{ .Values.grafana.apiMode }}.
+{{- if eq .Values.grafana.apiMode "iam" }}
+Enable Grafana feature flags kubernetesServiceAccountsApi and kubernetesServiceAccountTokensApi
+before starting this issuer. The configured namespace is {{ .Values.grafana.namespace }}.
+{{- end }}
 
 Before anyone can use it:
 
@@ -7,11 +13,11 @@ Before anyone can use it:
    Admin is not optional — creating service accounts needs it.
 
 2. The identity provider needs a client {{ .Values.oidc.clientID | quote }} whose
-   redirect URI is {{ .Values.grafana.publicURL }}{{ include "grafana-mcp-setup.basePath" . }}/oauth2/callback.
+   redirect URI is {{ .Values.appPublicURL | trimSuffix "/" }}{{ include "grafana-mcp-setup.basePath" . }}/oauth2/callback.
 
 {{- if not .Values.oidc.requiredGroups }}
 
-3. oidc.requiredGroups is empty, so anyone who can sign in to the identity
+3. allowAllAuthenticatedUsers is explicitly enabled, so anyone who can sign in to the identity
    provider can issue themselves a Grafana token — including people Grafana
    itself would refuse, because the login in front of this service runs against
    the provider and not against Grafana. Set it unless that is what you meant.

@@ -1,3 +1,9 @@
+{{- if and (empty .Values.oidc.requiredGroups) (not .Values.oidc.allowAllAuthenticatedUsers) }}
+{{- fail "set oidc.requiredGroups or explicitly enable oidc.allowAllAuthenticatedUsers" }}
+{{- end }}
+{{- if and (eq .Values.rotationLock.mode "local") (gt (int .Values.replicaCount) 1) }}
+{{- fail "replicaCount > 1 requires rotationLock.mode=kubernetes" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -5,10 +11,17 @@ metadata:
   labels:
     {{- include "grafana-mcp-setup.labels" . | nindent 4 }}
 spec:
-  # Not a knob to turn up: the process holds a freshly issued token in memory
-  # until the redirect fetches it, so a second pod answers that redirect with
-  # "already shown".
   replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      {{- if eq .Values.rotationLock.mode "local" }}
+      maxSurge: 0
+      maxUnavailable: 1
+      {{- else }}
+      maxSurge: 1
+      maxUnavailable: 0
+      {{- end }}
   selector:
     matchLabels:
       {{- include "grafana-mcp-setup.selectorLabels" . | nindent 6 }}
@@ -19,12 +32,15 @@ spec:
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- with .Values.podAnnotations }}
       annotations:
+        checksum/secrets: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- end }}
     spec:
       serviceAccountName: {{ include "grafana-mcp-setup.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 45
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -46,14 +62,31 @@ spec:
               value: {{ include "grafana-mcp-setup.basePath" . | quote }}
             - name: GRAFANA_URL
               value: {{ .Values.grafana.url | quote }}
+            - name: GRAFANA_API_MODE
+              value: {{ .Values.grafana.apiMode | quote }}
+            - name: GRAFANA_NAMESPACE
+              value: {{ .Values.grafana.namespace | quote }}
             - name: GRAFANA_PUBLIC_URL
               value: {{ .Values.grafana.publicURL | quote }}
+            - name: APP_PUBLIC_URL
+              value: {{ .Values.appPublicURL | quote }}
+            - name: FLASH_COOKIE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (printf "%s-flash" (include "grafana-mcp-setup.fullname" .)) .Values.flashCookie.existingSecret }}
+                  key: {{ .Values.flashCookie.existingSecretKey }}
             - name: OIDC_ISSUER
               value: {{ .Values.oidc.issuer | quote }}
             - name: OIDC_CLIENT_ID
               value: {{ .Values.oidc.clientID | quote }}
             - name: REQUIRED_GROUPS
               value: {{ join "," .Values.oidc.requiredGroups | quote }}
+            - name: ALLOW_ALL_AUTHENTICATED_USERS
+              value: {{ .Values.oidc.allowAllAuthenticatedUsers | quote }}
+            - name: ID_TOKEN_HEADER
+              value: {{ .Values.oidc.idTokenHeader | quote }}
+            - name: ID_TOKEN_SOURCE
+              value: {{ .Values.oidc.idTokenSource | quote }}
             - name: ID_TOKEN_COOKIE
               value: {{ .Values.oidc.idTokenCookie | quote }}
             - name: TOKEN_TTL_DAYS
@@ -63,6 +96,30 @@ spec:
                 secretKeyRef:
                   name: {{ include "grafana-mcp-setup.adminTokenSecret" . }}
                   key: {{ .Values.grafana.existingSecretKey }}
+            - name: ROTATION_LOCK_MODE
+              value: {{ .Values.rotationLock.mode | quote }}
+            {{- if eq .Values.rotationLock.mode "kubernetes" }}
+            - name: ROTATION_LEASE_NAME
+              value: {{ .Values.rotationLock.leaseName | quote }}
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          volumeMounts:
+            - name: rotation-lock
+              mountPath: /var/run/secrets/rotation-lock
+              readOnly: true
+            {{- end }}
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 24
           livenessProbe:
             httpGet:
               path: /healthz
@@ -71,12 +128,27 @@ spec:
             periodSeconds: 10
           readinessProbe:
             httpGet:
-              path: /healthz
+              path: /readyz
               port: http
             initialDelaySeconds: 2
             periodSeconds: 5
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+      {{- if eq .Values.rotationLock.mode "kubernetes" }}
+      volumes:
+        - name: rotation-lock
+          projected:
+            defaultMode: 0444
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

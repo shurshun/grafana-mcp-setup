@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "replicaCount": {"type": "integer", "minimum": 1},
+    "appPublicURL": {"type": "string", "pattern": "^https?://", "minLength": 8},
+    "basePath": {"type": "string", "pattern": "^/"},
+    "tokenTTLDays": {"type": "integer", "minimum": 1, "maximum": 365},
+    "grafana": {
+      "type": "object",
+      "properties": {
+        "apiMode": {"enum": ["legacy", "iam"]}
+      },
+      "required": ["apiMode"]
+    },
+    "rotationLock": {
+      "type": "object",
+      "properties": {
+        "mode": {"enum": ["local", "kubernetes"]},
+        "leaseName": {"type": "string", "minLength": 1, "maxLength": 63, "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"}
+      },
+      "required": ["mode", "leaseName"]
+    },
+    "oidc": {
+      "type": "object",
+      "properties": {
+        "idTokenSource": {"enum": ["header", "cookie"]},
+        "idTokenHeader": {"type": "string", "minLength": 1},
+        "idTokenCookie": {"type": "string", "minLength": 1},
+        "requiredGroups": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "allowAllAuthenticatedUsers": {"type": "boolean"}
+      },
+      "anyOf": [
+        {"properties": {"requiredGroups": {"minItems": 1}}},
+        {"properties": {"allowAllAuthenticatedUsers": {"const": true}}}
+      ]
+    },
+    "flashCookie": {
+      "type": "object",
+      "properties": {
+        "existingSecret": {"type": "string"},
+        "existingSecretKey": {"type": "string", "minLength": 1},
+        "key": {"type": "string"}
+      },
+      "anyOf": [
+        {"properties": {"existingSecret": {"minLength": 1}}},
+        {"properties": {"key": {"pattern": "^[A-Za-z0-9+/]{43}=$"}}}
+      ]
+    }
+  }
+}

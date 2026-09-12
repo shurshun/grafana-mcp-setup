@@ -8,23 +8,36 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
-# One, and not by accident: a freshly issued token waits in the process's
-# memory for the redirect that shows it. A second pod would answer that
-# redirect with "already shown".
+# Use the Kubernetes lock when pods can overlap, including during a rollout.
 replicaCount: 1
+rotationLock:
+  mode: kubernetes
+  # All deployments sharing the same Grafana organization must share this Lease.
+  leaseName: grafana-mcp-rotation
+  createLease: true
+
+appPublicURL: https://grafana.example.com
+flashCookie:
+  existingSecret: ""
+  existingSecretKey: flash-cookie-key
+  # Development only. Supply a base64-encoded 32-byte key.
+  key: ""
 
 # Where the service is mounted. The proxy in front of it authenticates this
 # prefix and nothing else, so Grafana's own routes are untouched.
 basePath: /setup-mcp
 
 grafana:
+  # legacy needs no experimental Grafana flags; iam selects the new API.
+  apiMode: legacy
+  # Namespace applies only to iam mode.
+  namespace: default
   # Reached from inside the cluster.
   url: http://grafana.monitoring.svc
   # Goes into the .mcp.json the page hands out.
   publicURL: https://grafana.example.com
-  # This service's own token. Admin, because creating a service account needs
-  # it and Grafana OSS has no role between Admin and Viewer. Either set it here
-  # and let the chart make a Secret, or point existingSecret at your own.
+  # Production installations should use existingSecret. Inline values are
+  # development-only because Helm stores them in release metadata.
   adminToken: ""
   existingSecret: ""
   existingSecretKey: admin-token
@@ -35,11 +48,14 @@ oidc:
   # Membership of any of these groups is the authorisation. Several, because an
   # application's roles are usually separate groups rather than nested ones.
   #
-  # Leave it empty only when everyone who can sign in may hold a Grafana token.
+  # An empty list requires allowAllAuthenticatedUsers to be explicitly true.
   # Note that the proxy in front authenticates against the identity provider,
   # not against Grafana, so Grafana's own group rules do not apply here.
   requiredGroups: []
-  # Must match the cookie the proxy leaves the ID token in.
+  allowAllAuthenticatedUsers: false
+  idTokenSource: header
+  idTokenHeader: X-Grafana-MCP-ID-Token
+  # Used only when idTokenSource is cookie.
   idTokenCookie: mcp_id_token
 
 tokenTTLDays: 90
@@ -88,6 +104,17 @@ securityPolicy:
   # own origin, and a Strict cookie is withheld on that first cross-site hop,
   # which shows up as a CSRF validation failure rather than a cookie problem.
   cookieSameSite: Lax
+
+serviceMonitor:
+  enabled: false
+  labels: {}
+  interval: 30s
+
+# When enabled, configure both ingress peers and destination-specific egress.
+networkPolicy:
+  enabled: false
+  ingressFrom: []
+  egress: []
 
 resources:
   requests:

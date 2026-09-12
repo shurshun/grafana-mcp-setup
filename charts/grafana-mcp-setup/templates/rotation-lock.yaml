@@ -1,0 +1,34 @@
+{{- if eq .Values.rotationLock.mode "kubernetes" }}
+{{- if .Values.rotationLock.createLease }}
+apiVersion: coordination.k8s.io/v1
+kind: Lease
+metadata:
+  name: {{ .Values.rotationLock.leaseName }}
+  labels:
+    {{- include "grafana-mcp-setup.labels" . | nindent 4 }}
+spec: {}
+---
+{{- end }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "grafana-mcp-setup.fullname" . }}-rotation
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    resourceNames: [{{ .Values.rotationLock.leaseName | quote }}]
+    verbs: [get, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "grafana-mcp-setup.fullname" . }}-rotation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "grafana-mcp-setup.fullname" . }}-rotation
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "grafana-mcp-setup.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

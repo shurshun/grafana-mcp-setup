@@ -1,5 +1,9 @@
 dist/
 dist-chart/
+dist-sbom/
 coverage.out
 *.tgz
 .DS_Store
+integration/node_modules/
+integration/test-results/
+integration/playwright-report/

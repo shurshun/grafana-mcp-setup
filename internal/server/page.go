@@ -1,6 +1,8 @@
 package server
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"html/template"
 	"log/slog"
 	"net/http"
@@ -22,19 +24,22 @@ const (
 )
 
 type pageData struct {
-	Email     string
-	BasePath  string
-	Formats   []mcpFormat
-	State     string
-	Token     string
-	Mask      string
-	Spent     bool // the one-time link was already spent
-	Created   string
-	Expires   string
-	ExpiresIn string
-	LastUsed  string
-	TTLDays   int
-	PublicURL string
+	Email          string
+	BasePath       string
+	Formats        []mcpFormat
+	State          string
+	Token          string
+	Mask           string
+	Spent          bool // the one-time link was already spent
+	Created        string
+	Expires        string
+	ExpiresIn      string
+	LastUsed       string
+	TTLDays        int
+	PublicURL      string
+	CSRFToken      string
+	CSPNonce       string
+	PartialCleanup bool
 }
 
 // fillFrom describes a token the API still knows about. Everything here is
@@ -61,7 +66,7 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Grafana MCP token</title>
-<style>
+<style nonce="{{ .CSPNonce }}">
   :root {
     color-scheme: light dark;
     --bg: #f6f7f9;
@@ -194,6 +199,10 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
 
   .note { margin: .7rem 0 0; color: var(--muted); font-size: .85rem; }
 
+  .modes { display: flex; gap: .4rem; margin: 0 0 .7rem; }
+  .mode { padding: .3rem .65rem; font-size: .8rem; }
+  .mode.on { border-color: var(--accent); color: var(--ink); }
+
   .snippet {
     border: 1px solid var(--code-line); border-radius: 10px; overflow: hidden;
     border-top: 2px solid color-mix(in srgb, var(--client, var(--accent)) 70%, transparent);
@@ -311,10 +320,17 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
         <path d="M12 8v5M12 16.5v.5M10.3 3.9L2.6 17.4A1.8 1.8 0 004.2 20h15.6a1.8 1.8 0 001.6-2.6L13.7 3.9a1.9 1.9 0 00-3.4 0z"
               stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
-      <p>Copy it now. Grafana shows a token once, and neither this page nor
-      anything behind it can show it again — coming back means issuing a new
-      one. It expires in {{ .TTLDays }} days.</p>
+	  <p>Copy it now. This response clears its short-lived delivery cookie. Do
+	  not copy or share browser cookies; a stolen copy may be replayed for up to
+	  five minutes. The Grafana token expires in {{ .TTLDays }} days.</p>
     </div>
+	{{ if .PartialCleanup }}
+	  <div class="callout">
+		<p>The replacement token is ready, but Grafana did not confirm that every
+		previous token was removed. Copy this token, then run the reconciliation
+		command or revoke all tokens from this page.</p>
+	  </div>
+	{{ end }}
 
     <h2>Add this to your config</h2>
     {{ template "snippet" . }}
@@ -345,18 +361,20 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
       <div><dt>Expires</dt><dd>{{ .Expires }}{{ if .ExpiresIn }} ({{ .ExpiresIn }} days){{ end }}</dd></div>
       <div><dt>Last used</dt><dd>{{ .LastUsed }}</dd></div>
     </dl>
-    <p>The secret is not stored anywhere, so it cannot be shown a second time.
-    The config below is the shape it goes in; paste your own copy into the token
-    field.</p>
+	<p>Grafana does not return the secret again, and the delivery cookie has been
+	cleared. The config below is the shape it goes in; paste your own copy into
+	the token field.</p>
 
     {{ template "snippet" . }}
 
     <h2>Lost it?</h2>
     <form method="post" action="{{ .BasePath }}/token">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
       <button type="button" class="ghost" id="ask">Issue a new token</button>
       <div class="confirm" id="confirm" hidden>
-        <p>The token above stops working the moment a new one is issued. Any MCP
-        client still using it starts failing.</p>
+        <p>Rotation creates a replacement, then revokes the old token. Update
+        your MCP clients after copying the replacement. If cleanup fails,
+        the page reports that older tokens may still work.</p>
         <div class="row">
           <button type="submit" class="danger">Yes, replace it</button>
           <button type="button" class="ghost" id="cancel">Cancel</button>
@@ -364,11 +382,17 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
       </div>
     </form>
     <noscript>
-      <style>#ask { display: none; } #confirm[hidden] { display: block; }</style>
+      <style nonce="{{ .CSPNonce }}">#ask { display: none; } #confirm[hidden] { display: block; }</style>
     </noscript>
+
+    <h2>Remove access</h2>
+    <form method="post" action="{{ .BasePath }}/revoke">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+      <button type="submit" class="ghost">Revoke all tokens</button>
+    </form>
   </div>
 
-  <script>
+  <script nonce="{{ .CSPNonce }}">
     const ask = document.getElementById("ask");
     const confirmBox = document.getElementById("confirm");
     ask.addEventListener("click", () => { confirmBox.hidden = false; ask.hidden = true; });
@@ -381,7 +405,8 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
 {{ else }}
   <div class="card">
     <p>This issues a personal, read-only Grafana token for the MCP server. It is
-    tied to your account, so do not share it.</p>
+	named from your verified email, so do not share it. It does not inherit your
+	Grafana or OIDC role; the service always creates it with Viewer access.</p>
 
     <ul class="facts">
       <li>
@@ -408,6 +433,7 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
     </ul>
 
     <form method="post" action="{{ .BasePath }}/token">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
       <button type="submit" class="primary">Issue a token</button>
     </form>
   </div>
@@ -429,31 +455,44 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
 
   {{ range $i, $f := .Formats }}
     <div class="panel" data-format="{{ $f.ID }}" role="tabpanel"{{ if ne $i 0 }} hidden{{ end }}>
-      <div class="snippet">
-        <div class="snippet-bar">
-          <span class="filename">{{ $f.File }}</span>
-          <button type="button" class="copy">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <rect x="9" y="9" width="11" height="11" rx="2.5" stroke="currentColor" stroke-width="1.8"/>
-              <path d="M5.5 15H5a1.5 1.5 0 01-1.5-1.5V5A1.5 1.5 0 015 3.5h8.5A1.5 1.5 0 0115 5v.5"
-                    stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-            </svg>
-            <span class="label">Copy</span>
-          </button>
-        </div>
-        <pre>{{ $f.Body }}</pre>
+      <div class="modes" role="radiogroup" aria-label="Launch mode">
+        {{ range $j, $v := $f.Variants }}
+          <button type="button" class="mode{{ if eq $j 0 }} on{{ end }}" data-mode="{{ $v.ID }}"
+                  role="radio" aria-checked="{{ if eq $j 0 }}true{{ else }}false{{ end }}">{{ $v.Name }}</button>
+        {{ end }}
       </div>
+      {{ range $j, $v := $f.Variants }}
+        <div class="variant" data-mode="{{ $v.ID }}"{{ if ne $j 0 }} hidden aria-hidden="true"{{ end }}>
+          <div class="snippet">
+            <div class="snippet-bar">
+              <span class="filename">{{ $f.File }}</span>
+              <button type="button" class="copy">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <rect x="9" y="9" width="11" height="11" rx="2.5" stroke="currentColor" stroke-width="1.8"/>
+                  <path d="M5.5 15H5a1.5 1.5 0 01-1.5-1.5V5A1.5 1.5 0 015 3.5h8.5A1.5 1.5 0 0115 5v.5"
+                        stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                </svg>
+                <span class="label">Copy</span>
+              </button>
+            </div>
+            <pre>{{ $v.Body }}</pre>
+          </div>
+          <p class="note">{{ $v.Note }}</p>
+        </div>
+      {{ end }}
       {{ with $f.Note }}<p class="note">{{ . }}</p>{{ end }}
     </div>
   {{ end }}
 
 </div>
 
-  <script>
+  <script nonce="{{ .CSPNonce }}">
     const clients = document.querySelector(".clients");
-    const token = clients.dataset.token;
+    let token = clients.dataset.token;
     const tabs = [...document.querySelectorAll(".tab")];
     const panels = [...document.querySelectorAll(".panel")];
+	const modeButtons = [...document.querySelectorAll(".mode")];
+	const variants = [...document.querySelectorAll(".variant")];
 
     function show(id) {
       const known = tabs.some((t) => t.dataset.format === id);
@@ -469,17 +508,35 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
 
     tabs.forEach((t) => t.addEventListener("click", () => show(t.dataset.format)));
 
+	function showMode(id) {
+	  if (!modeButtons.some((button) => button.dataset.mode === id)) return;
+	  modeButtons.forEach((button) => {
+	    const on = button.dataset.mode === id;
+	    button.classList.toggle("on", on);
+	    button.setAttribute("aria-checked", on);
+	  });
+	  variants.forEach((variant) => {
+	    variant.hidden = variant.dataset.mode !== id;
+	    variant.setAttribute("aria-hidden", variant.hidden);
+	  });
+	  try { localStorage.setItem("mcp-launch-mode", id); } catch {}
+	}
+
+	modeButtons.forEach((button) => button.addEventListener("click", () => showMode(button.dataset.mode)));
+
     // Remembering the choice is a convenience; a browser that refuses storage
     // just starts on the first tab.
     try {
       const saved = localStorage.getItem("mcp-client");
       if (saved) show(saved);
+	  const savedMode = localStorage.getItem("mcp-launch-mode");
+	  if (savedMode) showMode(savedMode);
     } catch {}
 
     document.querySelectorAll(".copy").forEach((copy) => {
-      const panel = copy.closest(".panel");
-      const snippet = panel.querySelector("pre");
-      const masked = panel.querySelector(".tok");
+	  const variant = copy.closest(".variant");
+	  const snippet = variant.querySelector("pre");
+	  const masked = variant.querySelector(".tok");
       const label = copy.querySelector(".label");
 
       copy.addEventListener("click", async () => {
@@ -491,6 +548,12 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
           await navigator.clipboard.writeText(real);
           label.textContent = "Copied";
           copy.classList.add("ok");
+          if (token) {
+            token = "";
+            delete clients.dataset.token;
+            document.querySelectorAll(".tok").forEach((node) => { node.textContent = "[token copied]"; });
+            document.querySelectorAll(".copy").forEach((button) => { button.disabled = true; });
+          }
         } catch {
           // Clipboard access can be refused. Unmask first, or a hand-made
           // selection copies the asterisks.
@@ -517,9 +580,16 @@ func (s *Server) render(w http.ResponseWriter, d pageData) {
 	if d.Mask != "" {
 		d.Formats = formats(d.PublicURL, d.Mask)
 	}
+	nonce := make([]byte, 18)
+	if _, err := rand.Read(nonce); err != nil {
+		http.Error(w, "could not prepare the page", http.StatusInternalServerError)
+		return
+	}
+	d.CSPNonce = base64.RawURLEncoding.EncodeToString(nonce)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// The token must not survive in a shared cache or a proxy.
 	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'nonce-"+d.CSPNonce+"'; script-src 'nonce-"+d.CSPNonce+"'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 	if err := page.Execute(w, d); err != nil {
 		slog.Error("rendering the page", "err", err)
 	}

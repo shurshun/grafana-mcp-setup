@@ -1,174 +1,502 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
-// fakeGrafana is enough of the service-account API to exercise the create and
-// the rotate branch.
 type fakeGrafana struct {
-	accounts map[string]int    // name -> id
-	tokens   map[int][]saToken // service account id -> its tokens
-	deleted  []int
-	nextID   int
+	mu         sync.Mutex
+	accounts   map[string]*serviceAccount
+	tokens     map[string][]tokenWire
+	order      []string
+	failDelete string
+	secret     string
+}
+
+func account(title, uid, role string, disabled bool) *serviceAccount {
+	sa := &serviceAccount{}
+	sa.Metadata.Name = uid
+	sa.Spec.Title = title
+	sa.Spec.Role = role
+	sa.Spec.Disabled = disabled
+	return sa
 }
 
 func (f *fakeGrafana) handler(t *testing.T) http.Handler {
 	t.Helper()
+	collection := "/apis/iam.grafana.app/v0alpha1/namespaces/default/serviceaccounts"
 	mux := http.NewServeMux()
-
-	mux.HandleFunc("GET /api/serviceaccounts/search", func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query().Get("query")
-		out := struct {
-			ServiceAccounts []serviceAccount `json:"serviceAccounts"`
-		}{}
-		if id, ok := f.accounts[q]; ok {
-			out.ServiceAccounts = append(out.ServiceAccounts, serviceAccount{ID: id, Name: q, Role: "Viewer"})
+	mux.HandleFunc("GET "+collection, func(w http.ResponseWriter, _ *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		items := make([]*serviceAccount, 0, len(f.accounts))
+		for _, sa := range f.accounts {
+			items = append(items, sa)
 		}
-		_ = json.NewEncoder(w).Encode(out)
+		_ = json.NewEncoder(w).Encode(map[string]any{"metadata": map[string]string{"continue": ""}, "items": items})
 	})
-
-	mux.HandleFunc("POST /api/serviceaccounts", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST "+collection, func(w http.ResponseWriter, r *http.Request) {
+		var sa serviceAccount
+		if err := json.NewDecoder(r.Body).Decode(&sa); err != nil {
+			t.Fatal(err)
+		}
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.order = append(f.order, "create-account")
+		f.accounts[sa.Spec.Title] = &sa
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(sa)
+	})
+	mux.HandleFunc("DELETE "+collection+"/{sa}", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		uid := r.PathValue("sa")
+		for title, sa := range f.accounts {
+			if sa.Metadata.Name == uid {
+				delete(f.accounts, title)
+				delete(f.tokens, uid)
+				f.order = append(f.order, "delete-account:"+uid)
+				break
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("GET "+collection+"/{sa}/tokens", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		items := append([]tokenWire(nil), f.tokens[r.PathValue("sa")]...)
+		_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "continue": ""})
+	})
+	mux.HandleFunc("POST "+collection+"/{sa}/tokens", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Name string `json:"name"`
-			Role string `json:"role"`
+			TokenName string `json:"tokenName"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		if body.Role != "Viewer" {
-			t.Errorf("service account created with role %q, want Viewer", body.Role)
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.order = append(f.order, "create:"+body.TokenName)
+		f.tokens[r.PathValue("sa")] = append(f.tokens[r.PathValue("sa")], tokenWire{Title: body.TokenName, Created: time.Now().Unix(), Expires: time.Now().Add(time.Hour).Unix()})
+		w.WriteHeader(http.StatusCreated)
+		secret := f.secret
+		if secret == "" {
+			secret = "glsa_new"
 		}
-		f.nextID++
-		f.accounts[body.Name] = f.nextID
-		_ = json.NewEncoder(w).Encode(serviceAccount{ID: f.nextID, Name: body.Name, Role: body.Role})
+		_ = json.NewEncoder(w).Encode(map[string]any{"token": secret, "serviceAccountTokenName": body.TokenName, "expires": time.Now().Add(time.Hour).Unix()})
 	})
-
-	mux.HandleFunc("GET /api/serviceaccounts/{id}/tokens", func(w http.ResponseWriter, r *http.Request) {
-		out := f.tokens[atoi(t, r.PathValue("id"))]
-		if out == nil {
-			out = []saToken{}
+	mux.HandleFunc("DELETE "+collection+"/{sa}/tokens/{token}", func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("token")
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.order = append(f.order, "delete:"+name)
+		if name == f.failDelete {
+			http.Error(w, "failed", http.StatusBadGateway)
+			return
 		}
-		_ = json.NewEncoder(w).Encode(out)
-	})
-
-	mux.HandleFunc("DELETE /api/serviceaccounts/{id}/tokens/{tokenID}", func(_ http.ResponseWriter, r *http.Request) {
-		f.deleted = append(f.deleted, atoi(t, r.PathValue("tokenID")))
-	})
-
-	mux.HandleFunc("POST /api/serviceaccounts/{id}/tokens", func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			SecondsToLive int `json:"secondsToLive"`
+		items := f.tokens[r.PathValue("sa")]
+		for i := range items {
+			if items[i].Title == name {
+				f.tokens[r.PathValue("sa")] = append(items[:i], items[i+1:]...)
+				break
+			}
 		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		if body.SecondsToLive <= 0 {
-			t.Errorf("token requested with secondsToLive %d, want a positive TTL", body.SecondsToLive)
-		}
-		_ = json.NewEncoder(w).Encode(map[string]string{"key": "glsa_fake"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"message": "deleted"})
 	})
-
 	return mux
 }
 
-func atoi(t *testing.T, s string) int {
-	t.Helper()
-	var n int
-	if _, err := json.Marshal(s); err != nil {
-		t.Fatal(err)
-	}
-	for _, c := range s {
-		n = n*10 + int(c-'0')
-	}
-	return n
-}
-
-func newServer(t *testing.T, f *fakeGrafana) *Server {
+func testServer(t *testing.T, f *fakeGrafana) *Server {
 	t.Helper()
 	ts := httptest.NewServer(f.handler(t))
 	t.Cleanup(ts.Close)
 	return &Server{
 		cfg:     Config{TokenTTL: 90 * 24 * time.Hour},
-		grafana: &grafana{base: ts.URL, token: "admin", hc: ts.Client()},
+		grafana: &grafana{base: ts.URL, token: "admin", mode: grafanaAPIModeIAM, namespace: "default", hc: ts.Client()},
+		locker:  newLocalLocker(),
+		flash:   testFlash(t),
 	}
 }
+
+func cleanupConfig(s *Server) Config {
+	return Config{GrafanaURL: s.grafana.base, GrafanaToken: "admin", GrafanaAPIMode: grafanaAPIModeIAM, GrafanaNamespace: "default", RotationLockMode: "local"}
+}
+
+func issueForTest(t *testing.T, s *Server, email string) (issueResult, error) {
+	t.Helper()
+	prepared, err := s.flash.prepareDelivery()
+	if err != nil {
+		return issueResult{}, err
+	}
+	return s.issue(context.Background(), email, prepared)
+}
+
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
 
 func TestIssueCreatesViewerAccount(t *testing.T) {
-	f := &fakeGrafana{accounts: map[string]int{}, tokens: map[int][]saToken{}}
-	s := newServer(t, f)
-
-	got, err := s.issue("someone@example.com")
-	if err != nil {
-		t.Fatalf("issue: %v", err)
+	f := &fakeGrafana{accounts: map[string]*serviceAccount{}, tokens: map[string][]tokenWire{}}
+	s := testServer(t, f)
+	got, err := issueForTest(t, s, "someone@example.com")
+	if err != nil || got.Token != "glsa_new" || got.PartialCleanup {
+		t.Fatalf("issue = %#v, %v", got, err)
 	}
-	if got != "glsa_fake" {
-		t.Errorf("token = %q, want glsa_fake", got)
-	}
-	if _, ok := f.accounts["mcp-someone@example.com"]; !ok {
-		t.Errorf("no service account created, have %v", f.accounts)
+	sa := f.accounts["mcp-someone@example.com"]
+	if sa == nil || sa.Spec.Role != "Viewer" || sa.Spec.Disabled {
+		t.Fatalf("created account = %#v", sa)
 	}
 }
 
-func TestIssueRotatesExistingTokens(t *testing.T) {
-	const name = "mcp-someone@example.com"
+func TestRotationCreatesBeforeDeleting(t *testing.T) {
+	title, uid := "mcp-someone@example.com", "sa-one"
 	f := &fakeGrafana{
-		accounts: map[string]int{name: 7},
-		tokens:   map[int][]saToken{7: {{ID: 11}, {ID: 12}}},
-		nextID:   7,
+		accounts: map[string]*serviceAccount{title: account(title, uid, "Viewer", false)},
+		tokens:   map[string][]tokenWire{uid: {{Title: "old", Created: time.Now().Add(-time.Hour).Unix()}}},
 	}
-	s := newServer(t, f)
-
-	if _, err := s.issue("someone@example.com"); err != nil {
-		t.Fatalf("issue: %v", err)
+	s := testServer(t, f)
+	if _, err := issueForTest(t, s, "someone@example.com"); err != nil {
+		t.Fatal(err)
 	}
-	if len(f.deleted) != 2 {
-		t.Errorf("revoked %v, want both existing tokens", f.deleted)
-	}
-	if len(f.accounts) != 1 {
-		t.Errorf("accounts = %v, want the existing one reused", f.accounts)
+	if len(f.order) < 2 || !strings.HasPrefix(f.order[0], "create:mcp-") || f.order[1] != "delete:old" {
+		t.Fatalf("mutation order = %v", f.order)
 	}
 }
 
-// The landing page asks what the person already holds, so an expired token must
-// not count: the page would otherwise show a config nobody can use.
-func TestLiveTokenIgnoresExpiredOnes(t *testing.T) {
-	const email = "someone@example.com"
-	past := time.Now().Add(-24 * time.Hour)
-	soon := time.Now().Add(30 * 24 * time.Hour)
-
-	t.Run("no account", func(t *testing.T) {
-		s := newServer(t, &fakeGrafana{accounts: map[string]int{}, tokens: map[int][]saToken{}})
-		got, err := s.liveToken(email)
-		if err != nil || got != nil {
-			t.Fatalf("liveToken = %v, %v; want nil, nil", got, err)
-		}
-	})
-
-	t.Run("only expired", func(t *testing.T) {
-		s := newServer(t, &fakeGrafana{
-			accounts: map[string]int{"mcp-" + email: 7},
-			tokens:   map[int][]saToken{7: {{ID: 11, Expiration: &past, HasExpired: true}}},
+func TestIssueRefusesWrongRoleAndDisabledAccounts(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		role     string
+		disabled bool
+	}{{"wrong role", "Admin", false}, {"disabled", "Viewer", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			title := "mcp-someone@example.com"
+			f := &fakeGrafana{accounts: map[string]*serviceAccount{title: account(title, "sa-one", tc.role, tc.disabled)}, tokens: map[string][]tokenWire{}}
+			_, err := issueForTest(t, testServer(t, f), "someone@example.com")
+			if err == nil || len(f.order) != 0 {
+				t.Fatalf("issue error = %v, mutations = %v", err, f.order)
+			}
 		})
-		got, err := s.liveToken(email)
-		if err != nil || got != nil {
-			t.Fatalf("liveToken = %v, %v; want nil, nil", got, err)
-		}
-	})
+	}
+}
 
-	t.Run("newest live one wins", func(t *testing.T) {
-		older := saToken{ID: 11, Created: time.Now().Add(-72 * time.Hour), Expiration: &soon}
-		newer := saToken{ID: 12, Created: time.Now().Add(-1 * time.Hour), Expiration: &soon}
-		s := newServer(t, &fakeGrafana{
-			accounts: map[string]int{"mcp-" + email: 7},
-			tokens:   map[int][]saToken{7: {older, newer, {ID: 10, Expiration: &past, HasExpired: true}}},
+func TestFailedOldTokenDeleteKeepsTheShowableReplacement(t *testing.T) {
+	title, uid := "mcp-someone@example.com", "sa-one"
+	f := &fakeGrafana{
+		accounts:   map[string]*serviceAccount{title: account(title, uid, "Viewer", false)},
+		tokens:     map[string][]tokenWire{uid: {{Title: "old"}}},
+		failDelete: "old",
+	}
+	s := testServer(t, f)
+	issued, err := issueForTest(t, s, "someone@example.com")
+	if err != nil || !issued.PartialCleanup || issued.Token != "glsa_new" {
+		t.Fatalf("partial rotation = %#v, %v", issued, err)
+	}
+	opened, err := s.flash.open(issued.FlashCookie, "someone@example.com")
+	if err != nil || !opened.Partial || opened.Token != "glsa_new" {
+		t.Fatalf("partial delivery cookie = %#v, %v", opened, err)
+	}
+	if len(f.tokens[uid]) != 2 {
+		t.Fatalf("replacement was discarded after ambiguous cleanup: %#v", f.tokens[uid])
+	}
+	if strings.HasPrefix(f.order[len(f.order)-1], "delete:mcp-") {
+		t.Fatalf("replacement was blindly rolled back: %v", f.order)
+	}
+}
+
+func TestDeliveryPreparationFailsBeforeAnyGrafanaMutation(t *testing.T) {
+	f := &fakeGrafana{accounts: map[string]*serviceAccount{}, tokens: map[string][]tokenWire{}}
+	s := testServer(t, f)
+	s.flash.random = failingReader{}
+	if _, err := s.prepareAndIssue(context.Background(), "someone@example.com"); err == nil {
+		t.Fatal("delivery preparation unexpectedly succeeded")
+	}
+	if len(f.order) != 0 {
+		t.Fatalf("Grafana mutated before delivery was prepared: %v", f.order)
+	}
+}
+
+func TestOversizedDeliveryIsRevokedBeforeOldTokenCleanup(t *testing.T) {
+	title, uid := "mcp-someone@example.com", "sa-one"
+	f := &fakeGrafana{
+		accounts: map[string]*serviceAccount{title: account(title, uid, "Viewer", false)},
+		tokens:   map[string][]tokenWire{uid: {{Title: "old"}}},
+		secret:   strings.Repeat("x", maxFlashCookieValue),
+	}
+	if _, err := issueForTest(t, testServer(t, f), "someone@example.com"); err == nil {
+		t.Fatal("oversized cookie was accepted")
+	}
+	if len(f.tokens[uid]) != 1 || f.tokens[uid][0].Title != "old" {
+		t.Fatalf("old credential was removed before delivery size validation: %#v", f.tokens[uid])
+	}
+	if len(f.order) != 2 || !strings.HasPrefix(f.order[0], "create:mcp-") || !strings.HasPrefix(f.order[1], "delete:mcp-") {
+		t.Fatalf("unexpected oversized-token cleanup order: %v", f.order)
+	}
+}
+
+func TestReadyExplainsDisabledIAMAPI(t *testing.T) {
+	ts := httptest.NewServer(http.NotFoundHandler())
+	defer ts.Close()
+	g := &grafana{base: ts.URL, token: "admin", mode: grafanaAPIModeIAM, namespace: "default", hc: ts.Client()}
+	err := g.ready(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "kubernetesServiceAccountsApi") {
+		t.Fatalf("ready error = %v", err)
+	}
+	var apiErr *apiError
+	if errors.As(err, &apiErr) {
+		t.Fatal("readiness leaked the raw 404 instead of the feature prerequisite")
+	}
+}
+
+func TestGrafanaErrorDoesNotExposeResponseBody(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "glsa_secret_from_response", http.StatusBadRequest)
+	}))
+	defer ts.Close()
+	g := &grafana{base: ts.URL, token: "admin", mode: grafanaAPIModeIAM, namespace: "default", hc: ts.Client()}
+	err := g.do(context.Background(), http.MethodPost, "/token", map[string]string{"safe": "request"}, nil)
+	if err == nil || strings.Contains(err.Error(), "glsa_secret") {
+		t.Fatalf("Grafana error = %v", err)
+	}
+}
+
+func TestReconcileKeepsOnlyTheExplicitLiveToken(t *testing.T) {
+	title, uid := "mcp-someone@example.com", "sa-one"
+	now := time.Now()
+	f := &fakeGrafana{
+		accounts: map[string]*serviceAccount{title: account(title, uid, "Viewer", false)},
+		tokens: map[string][]tokenWire{uid: {
+			{Title: "kept", Created: now.Unix(), Expires: now.Add(time.Hour).Unix()},
+			{Title: "other", Created: now.Unix(), Expires: now.Add(time.Hour).Unix()},
+		}},
+	}
+	s := testServer(t, f)
+	if err := Reconcile(context.Background(), cleanupConfig(s), []string{"someone@example.com"}, CleanupOptions{Apply: true, KeepToken: "kept"}, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.tokens[uid]) != 1 || f.tokens[uid][0].Title != "kept" {
+		t.Fatalf("tokens = %#v", f.tokens[uid])
+	}
+}
+
+func TestReconcileValidatesKeepTokenBeforeDeleting(t *testing.T) {
+	title, uid := "mcp-someone@example.com", "sa-one"
+	f := &fakeGrafana{
+		accounts: map[string]*serviceAccount{title: account(title, uid, "Viewer", false)},
+		tokens:   map[string][]tokenWire{uid: {{Title: "only-live", Expires: time.Now().Add(time.Hour).Unix()}}},
+	}
+	s := testServer(t, f)
+	if err := Reconcile(context.Background(), cleanupConfig(s), []string{"someone@example.com"}, CleanupOptions{Apply: true, KeepToken: "missing"}, io.Discard); err == nil {
+		t.Fatal("missing keep token was accepted")
+	}
+	if len(f.order) != 0 {
+		t.Fatalf("tokens changed before keep-token validation: %v", f.order)
+	}
+}
+
+func TestOffboardRefusesAdminAccount(t *testing.T) {
+	title, uid := "mcp-someone@example.com", "sa-one"
+	f := &fakeGrafana{accounts: map[string]*serviceAccount{title: account(title, uid, "Admin", false)}, tokens: map[string][]tokenWire{}}
+	s := testServer(t, f)
+	if err := Offboard(context.Background(), cleanupConfig(s), []string{"someone@example.com"}, true, io.Discard); err == nil {
+		t.Fatal("Admin account was accepted for deletion")
+	}
+	if len(f.order) != 0 {
+		t.Fatalf("Admin account changed: %v", f.order)
+	}
+}
+
+func TestReadyRequiresTokenAPIAndAuthorizedCollection(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		tokenVerbs []string
+		collection int
+		wantReady  bool
+	}{
+		{"missing token API", nil, http.StatusOK, false},
+		{"missing token delete", []string{"get", "create"}, http.StatusOK, false},
+		{"invalid credentials", []string{"get", "create", "delete"}, http.StatusUnauthorized, false},
+		{"ready", []string{"get", "create", "delete"}, http.StatusOK, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/apis/"+iamAPIVersion {
+					resources := []map[string]any{{"name": "serviceaccounts", "verbs": []string{"list", "create", "delete"}}}
+					if tc.tokenVerbs != nil {
+						resources = append(resources, map[string]any{"name": "serviceaccounts/tokens", "verbs": tc.tokenVerbs})
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"resources": resources})
+					return
+				}
+				w.WriteHeader(tc.collection)
+				_, _ = io.WriteString(w, `{"items":[]}`)
+			}))
+			defer ts.Close()
+			g := &grafana{base: ts.URL, mode: grafanaAPIModeIAM, namespace: "default", hc: ts.Client()}
+			if err := g.ready(context.Background()); (err == nil) != tc.wantReady {
+				t.Fatalf("ready returned %v; wantReady=%t", err, tc.wantReady)
+			}
 		})
-		got, err := s.liveToken(email)
-		if err != nil {
-			t.Fatalf("liveToken: %v", err)
+	}
+}
+
+func TestAmbiguousTokenCreationCleansOnlyRequestedName(t *testing.T) {
+	var mu sync.Mutex
+	deleted := ""
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			select {
+			case <-r.Context().Done():
+			case <-time.After(100 * time.Millisecond):
+			}
+			return
 		}
-		if got == nil || got.ID != 12 {
-			t.Fatalf("liveToken = %v, want the newest token (12)", got)
+		if r.Method == http.MethodDelete {
+			mu.Lock()
+			deleted = r.URL.Path
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{}`)
 		}
+	}))
+	defer ts.Close()
+	g := &grafana{base: ts.URL, mode: grafanaAPIModeIAM, namespace: "default", hc: ts.Client()}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if _, err := g.newToken(ctx, "sa-one", "new-unique-name", time.Hour); err == nil {
+		t.Fatal("ambiguous creation unexpectedly succeeded")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !strings.HasSuffix(deleted, "/sa-one/tokens/new-unique-name") {
+		t.Fatalf("cleanup did not use an independent context and exact requested name: %q", deleted)
+	}
+}
+
+func TestTokenCreationConflictDoesNotDeleteExistingToken(t *testing.T) {
+	deleted := false
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			deleted = true
+		}
+		w.WriteHeader(http.StatusConflict)
+	}))
+	defer ts.Close()
+	g := &grafana{base: ts.URL, mode: grafanaAPIModeIAM, namespace: "default", hc: ts.Client()}
+	if _, err := g.newToken(context.Background(), "sa-one", "existing", time.Hour); err == nil {
+		t.Fatal("conflict unexpectedly succeeded")
+	}
+	if deleted {
+		t.Fatal("cleanup deleted a pre-existing name after conflict")
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return fn(r) }
+
+func TestRotationDeadlineReturnsShowablePartialResult(t *testing.T) {
+	title, uid := "mcp-someone@example.com", "sa-one"
+	f := &fakeGrafana{
+		accounts: map[string]*serviceAccount{title: account(title, uid, "Viewer", false)},
+		tokens:   map[string][]tokenWire{uid: {{Title: "old"}}},
+	}
+	s := testServer(t, f)
+	transport := s.grafana.hc.Transport
+	s.grafana.hc.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Method == http.MethodDelete && strings.HasSuffix(r.URL.Path, "/old") {
+			<-r.Context().Done()
+			return nil, r.Context().Err()
+		}
+		return transport.RoundTrip(r)
 	})
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	issued, err := s.prepareAndIssue(ctx, "someone@example.com")
+	if err != nil || !issued.PartialCleanup || time.Since(started) > time.Second {
+		t.Fatalf("deadline did not return a prompt partial result: %v", err)
+	}
+	opened, err := s.flash.open(issued.FlashCookie, "someone@example.com")
+	if err != nil || opened.Token != "glsa_new" || !opened.Partial {
+		t.Fatal("replacement was not deliverable after the cleanup deadline")
+	}
+}
+
+func TestUnexpectedTokenNameAlwaysRequiresReconciliation(t *testing.T) {
+	var deleted []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			_, _ = io.WriteString(w, `{"token":"glsa_test","serviceAccountTokenName":"unrelated"}`)
+			return
+		}
+		deleted = append(deleted, r.URL.Path)
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer ts.Close()
+	g := &grafana{base: ts.URL, mode: grafanaAPIModeIAM, namespace: "default", hc: ts.Client()}
+	_, err := g.newToken(context.Background(), "sa-one", "requested", time.Hour)
+	if !errors.Is(err, errTokenReconciliation) {
+		t.Fatal("unexpected name did not require reconciliation")
+	}
+	if len(deleted) != 1 || !strings.HasSuffix(deleted[0], "/requested") {
+		t.Fatal("cleanup touched an unrelated token name")
+	}
+}
+
+func TestOversizedTokenCleanupSurvivesRequestCancellation(t *testing.T) {
+	title, uid := "mcp-someone@example.com", "sa-one"
+	f := &fakeGrafana{
+		accounts: map[string]*serviceAccount{title: account(title, uid, "Viewer", false)},
+		tokens:   map[string][]tokenWire{uid: {{Title: "old"}}},
+		secret:   strings.Repeat("x", maxFlashCookieValue),
+	}
+	s := testServer(t, f)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	transport := s.grafana.hc.Transport
+	s.grafana.hc.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/tokens") {
+			recorder := httptest.NewRecorder()
+			f.handler(t).ServeHTTP(recorder, r)
+			cancel()
+			return recorder.Result(), nil
+		}
+		return transport.RoundTrip(r)
+	})
+	issued, err := s.prepareAndIssue(ctx, "someone@example.com")
+	if err == nil || issued.AccountID != uid || issued.TokenName == "" {
+		t.Fatal("undeliverable token did not preserve failure audit identifiers")
+	}
+	if len(f.tokens[uid]) != 1 || f.tokens[uid][0].Title != "old" {
+		t.Fatal("canceled delivery cleanup failed to preserve only the old token")
+	}
+}
+
+func TestFailedCreationRetainsAttemptedAuditIdentifiers(t *testing.T) {
+	title, uid := "mcp-someone@example.com", "sa-one"
+	f := &fakeGrafana{accounts: map[string]*serviceAccount{title: account(title, uid, "Viewer", false)}, tokens: map[string][]tokenWire{uid: {{Title: "old"}}}}
+	s := testServer(t, f)
+	transport := s.grafana.hc.Transport
+	s.grafana.hc.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/tokens") {
+			recorder := httptest.NewRecorder()
+			recorder.WriteHeader(http.StatusBadGateway)
+			return recorder.Result(), nil
+		}
+		return transport.RoundTrip(r)
+	})
+	issued, err := s.prepareAndIssue(context.Background(), "someone@example.com")
+	if err == nil || issued.AccountID != uid || !strings.HasPrefix(issued.TokenName, "mcp-") {
+		t.Fatal("ambiguous creation discarded identifiers needed for recovery audit")
+	}
+	if issued.Token != "" || issued.FlashCookie != "" {
+		t.Fatal("failed creation exposed token delivery state")
+	}
 }

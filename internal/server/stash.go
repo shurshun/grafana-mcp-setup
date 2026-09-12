@@ -1,68 +1,179 @@
 package server
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
-	"sync"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"strconv"
+	"strings"
 	"time"
 )
 
-// How long a freshly issued secret waits for the browser to come and fetch it.
-const stashTTL = 5 * time.Minute
+const flashCookieName = "grafana_mcp_flash"
 
-// stash holds a secret between the POST that creates it and the redirect that
-// shows it. Keeping the secret out of the POST response is what makes a refresh
-// harmless: the shown page is a plain GET, so reloading it cannot rotate the
-// token again.
-//
-// It lives in this process only, which is why the chart runs a single replica.
-// With more, a redirect could land on another pod and the page would say the
-// token is gone instead of showing it.
-type stash struct {
-	mu    sync.Mutex
-	items map[string]stashed
+type flashCodec struct {
+	aead    cipher.AEAD
+	csrfKey [32]byte
+	ttl     time.Duration
+	now     func() time.Time
+	random  io.Reader
+	aad     []byte
 }
 
-type stashed struct {
-	email string
-	token string
-	until time.Time
+type flashPayload struct {
+	Version      int    `json:"v"`
+	Email        string `json:"email"`
+	Token        string `json:"token"`
+	Expires      int64  `json:"exp"`
+	TokenCreated int64  `json:"tokenCreated"`
+	TokenExpires int64  `json:"tokenExpires"`
+	Partial      bool   `json:"partial,omitempty"`
 }
 
-func newStash() *stash { return &stash{items: map[string]stashed{}} }
+type flashPreparation struct {
+	nonce   []byte
+	expires int64
+}
 
-func (s *stash) put(email, token string) (string, error) {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
+type openedFlash struct {
+	Token        string
+	Partial      bool
+	TokenCreated time.Time
+	TokenExpires *time.Time
+}
+
+type deliveryPreparation struct {
+	success flashPreparation
+	partial flashPreparation
+}
+
+func newFlashCodec(key []byte, ttl time.Duration, basePath string) (*flashCodec, error) {
+	if len(key) != 32 {
+		return nil, errors.New("flash cookie key must contain 32 bytes")
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	return &flashCodec{
+		aead:    aead,
+		csrfKey: sha256.Sum256(append(append([]byte(nil), key...), []byte("csrf-v1")...)),
+		ttl:     ttl,
+		now:     time.Now,
+		random:  rand.Reader,
+		aad:     []byte("grafana-mcp-flash-v1\x00" + basePath),
+	}, nil
+}
+
+func (c *flashCodec) prepare() (flashPreparation, error) {
+	nonce := make([]byte, c.aead.NonceSize())
+	if _, err := io.ReadFull(c.random, nonce); err != nil {
+		return flashPreparation{}, err
+	}
+	return flashPreparation{nonce: nonce, expires: c.now().Add(c.ttl).Unix()}, nil
+}
+
+func (c *flashCodec) prepareDelivery() (deliveryPreparation, error) {
+	success, err := c.prepare()
+	if err != nil {
+		return deliveryPreparation{}, err
+	}
+	partial, err := c.prepare()
+	if err != nil {
+		return deliveryPreparation{}, err
+	}
+	return deliveryPreparation{success: success, partial: partial}, nil
+}
+
+func (c *flashCodec) sealPrepared(prepared flashPreparation, email, token string, partial bool, created time.Time, tokenExpires *time.Time) string {
+	expires := int64(0)
+	if tokenExpires != nil {
+		expires = tokenExpires.Unix()
+	}
+	payload, _ := json.Marshal(flashPayload{
+		Version:      1,
+		Email:        email,
+		Token:        token,
+		Expires:      prepared.expires,
+		TokenCreated: created.Unix(),
+		TokenExpires: expires,
+		Partial:      partial,
+	})
+	sealed := c.aead.Seal(prepared.nonce, prepared.nonce, payload, c.aad)
+	return base64.RawURLEncoding.EncodeToString(sealed)
+}
+
+func (c *flashCodec) seal(email, token string) (string, error) {
+	prepared, err := c.prepare()
+	if err != nil {
 		return "", err
 	}
-	id := base64.RawURLEncoding.EncodeToString(b)
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	now := time.Now()
-	for k, v := range s.items {
-		if now.After(v.until) {
-			delete(s.items, k)
-		}
-	}
-	s.items[id] = stashed{email: email, token: token, until: now.Add(stashTTL)}
-	return id, nil
+	return c.sealPrepared(prepared, email, token, false, c.now(), nil), nil
 }
 
-// take reads the secret once. The email must match the person asking, so a
-// guessed id cannot hand someone else's token over.
-func (s *stash) take(id, email string) (string, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (c *flashCodec) open(value, email string) (openedFlash, error) {
+	sealed, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil || len(sealed) < c.aead.NonceSize() {
+		return openedFlash{}, errors.New("invalid flash cookie")
+	}
+	nonce, ciphertext := sealed[:c.aead.NonceSize()], sealed[c.aead.NonceSize():]
+	plain, err := c.aead.Open(nil, nonce, ciphertext, c.aad)
+	if err != nil {
+		return openedFlash{}, errors.New("invalid flash cookie")
+	}
+	var payload flashPayload
+	if err := json.Unmarshal(plain, &payload); err != nil {
+		return openedFlash{}, errors.New("invalid flash cookie")
+	}
+	if payload.Version != 1 || payload.Token == "" || subtle.ConstantTimeCompare([]byte(payload.Email), []byte(email)) != 1 {
+		return openedFlash{}, errors.New("flash cookie belongs to another identity")
+	}
+	if c.now().Unix() >= payload.Expires {
+		return openedFlash{}, errors.New("flash cookie expired")
+	}
+	opened := openedFlash{Token: payload.Token, Partial: payload.Partial, TokenCreated: time.Unix(payload.TokenCreated, 0).UTC()}
+	opened.TokenExpires = unixTime(payload.TokenExpires)
+	return opened, nil
+}
 
-	v, ok := s.items[id]
-	if !ok {
-		return "", false
+func (c *flashCodec) csrf(email string) (string, error) {
+	nonce := make([]byte, 16)
+	if _, err := io.ReadFull(c.random, nonce); err != nil {
+		return "", err
 	}
-	delete(s.items, id)
-	if v.email != email || time.Now().After(v.until) {
-		return "", false
+	payload := strconv.FormatInt(c.now().Add(c.ttl).Unix(), 10) + "." + base64.RawURLEncoding.EncodeToString(nonce)
+	mac := hmac.New(sha256.New, c.csrfKey[:])
+	_, _ = mac.Write([]byte(email + "\x00" + payload))
+	return payload + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
+}
+
+func (c *flashCodec) validateCSRF(value, email string) error {
+	parts := strings.Split(value, ".")
+	if len(parts) != 3 {
+		return errors.New("invalid CSRF token")
 	}
-	return v.token, true
+	exp, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || c.now().Unix() >= exp {
+		return errors.New("expired CSRF token")
+	}
+	payload := parts[0] + "." + parts[1]
+	want := hmac.New(sha256.New, c.csrfKey[:])
+	_, _ = want.Write([]byte(email + "\x00" + payload))
+	got, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil || !hmac.Equal(got, want.Sum(nil)) {
+		return fmt.Errorf("invalid CSRF token")
+	}
+	return nil
 }
