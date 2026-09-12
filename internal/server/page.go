@@ -161,22 +161,26 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
 
   /* Tabs -------------------------------------------------------------- */
 
+  /* One control rather than six buttons: a tray with the segments inside it,
+     and the active one raised out of the tray. */
   .tabs {
-    display: flex; flex-wrap: wrap; gap: .4rem;
-    margin-bottom: .75rem;
+    display: inline-flex; flex-wrap: wrap; gap: 2px;
+    margin-bottom: .9rem; padding: 3px;
+    border: 1px solid var(--line); border-radius: 10px;
+    background: color-mix(in srgb, var(--ink) 5%, var(--card));
   }
   .tab {
-    display: inline-flex; align-items: center; gap: .45rem;
-    padding: .4rem .75rem; font-size: .85rem;
-    border: 1px solid var(--line); border-radius: 8px;
-    background: var(--card); color: var(--muted);
+    display: inline-flex; align-items: center; gap: .4rem;
+    padding: .4rem .7rem; font-size: .85rem;
+    border: 1px solid transparent; border-radius: 7px;
+    background: transparent; color: var(--muted);
   }
-  .tab svg { color: var(--client, var(--muted)); opacity: .85; }
+  .tab svg { color: var(--client, var(--muted)); opacity: .75; }
   .tab:hover { color: var(--ink); }
   .tab.on {
-    color: var(--ink);
-    border-color: color-mix(in srgb, var(--client, var(--accent)) 55%, transparent);
-    background: color-mix(in srgb, var(--client, var(--accent)) 12%, var(--card));
+    color: var(--ink); background: var(--card);
+    border-color: var(--line);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, .25);
   }
   .tab.on svg { opacity: 1; }
 
