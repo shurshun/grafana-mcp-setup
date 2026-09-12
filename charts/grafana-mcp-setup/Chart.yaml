@@ -2,8 +2,8 @@ apiVersion: v2
 name: grafana-mcp-setup
 description: Self-service page that issues personal, read-only Grafana service-account tokens for MCP clients.
 type: application
-version: 0.3.2
-appVersion: "0.3.2"
+version: 0.4.0
+appVersion: "0.4.0"
 home: https://github.com/shurshun/grafana-mcp-setup
 sources:
   - https://github.com/shurshun/grafana-mcp-setup
