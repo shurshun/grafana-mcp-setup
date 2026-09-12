@@ -288,6 +288,9 @@ test('Envoy authenticates with OIDC and forwards a verified ID token', async ({ 
 
   await page.reload();
   expect(await issuedToken(page)).toBeNull();
+  await page.getByRole('radio', { name: '1Password / env', exact: true }).click();
+  await page.getByRole('radio', { name: 'Token in configuration', exact: true }).click();
+  await expect(page.locator('.panel:not([hidden]) .variant:not([hidden]) .copy')).toBeEnabled();
 
   await page.getByRole('button', { name: 'Issue a new token' }).click();
   await page.getByRole('button', { name: 'Yes, replace it' }).click();

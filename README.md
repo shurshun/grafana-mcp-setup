@@ -103,8 +103,9 @@ Environment at `/Users/example/work/project/.env`. Saving to 1Password is manual
 
 If direnv already loads that file, keep your existing setup. Otherwise add
 `dotenv .env` to the project's `.envrc`, review it, and run `direnv allow`.
-Install direnv and `mcp-grafana` 1.4.1 and make them available to your MCP client. If the
-desktop app cannot find them, use absolute executable paths in the configuration.
+Install direnv and the selected launcher: `mcp-grafana` 1.4.1 for the binary mode,
+uv for uvx, or Docker for Docker mode. Make the executables available to your MCP
+client, or use absolute executable paths. This example uses the installed binary.
 
 ```toml
 [mcp_servers.grafana]
