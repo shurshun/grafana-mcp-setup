@@ -513,6 +513,7 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
   <script nonce="{{ .CSPNonce }}">
     const clients = document.querySelector(".clients");
     let token = clients.dataset.token;
+    let tokenCopied = false;
     const tabs = [...document.querySelectorAll(".tab")];
     const panels = [...document.querySelectorAll(".panel")];
 	const modeButtons = [...document.querySelectorAll(".mode[data-mode]")];
@@ -570,7 +571,7 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
         document.querySelector(".env-guide").hidden = storage !== "env";
         document.querySelectorAll(".copy").forEach((copy) => {
           const pre = copy.closest(".snippet").querySelector("pre:not([hidden])");
-          copy.disabled = !token && !!pre.querySelector(".tok");
+          copy.disabled = tokenCopied && !!pre.querySelector(".tok");
         });
       });
     });
@@ -593,6 +594,7 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
           label.textContent = "Copied";
           copy.classList.add("ok");
           if (token && masked) {
+            tokenCopied = true;
             token = "";
             delete clients.dataset.token;
             document.querySelectorAll(".tok").forEach((node) => { node.textContent = "[token copied]"; });
