@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"strings"
 )
 
 // tokenSentinel stands in for the secret while a snippet is being built, so the
@@ -120,7 +121,7 @@ func formats(publicURL, mask string) []mcpFormat {
 	return out
 }
 
-func launchCommand(modes ...string) (string, string) {
+func launchCommand(modes ...string) (string, []string) {
 	mode := "binary"
 	if len(modes) > 0 {
 		mode = modes[0]
@@ -134,56 +135,100 @@ func launchCommand(modes ...string) (string, string) {
 		command = "docker"
 		args = append([]string{"run", "--rm", "-i", "-e", "GRAFANA_URL", "-e", "GRAFANA_SERVICE_ACCOUNT_TOKEN", "grafana/mcp-grafana:" + mcpVersion}, args...)
 	}
-	encoded, _ := json.Marshal(args)
-	return command, string(encoded)
+	return command, args
 }
 
 func mcpServersJSON(key, publicURL string, withType bool, mode ...string) string {
 	command, args := launchCommand(mode...)
-	typeLine := ""
+	server := stdioServerJSON{Command: command, Args: args, Env: grafanaEnvJSON{URL: publicURL, Token: tokenSentinel}}
 	if withType {
-		typeLine = "      \"type\": \"stdio\",\n"
+		server.Type = "stdio"
 	}
-	return fmt.Sprintf(`{
-  %q: {
-    "grafana": {
-%s      "command": %q,
-      "args": %s,
-      "env": {
-        "GRAFANA_URL": %q,
-        "GRAFANA_SERVICE_ACCOUNT_TOKEN": %q
-      }
-    }
-  }
-}`, key, typeLine, command, args, publicURL, tokenSentinel)
+	root := mcpServersRootJSON{}
+	servers := map[string]stdioServerJSON{"grafana": server}
+	if key == "servers" {
+		root.Servers = servers
+	} else {
+		root.MCPServers = servers
+	}
+	return marshalPrettyJSON(root)
 }
 
 func zedJSON(publicURL string, mode ...string) string {
 	command, args := launchCommand(mode...)
-	return fmt.Sprintf(`{
-  "context_servers": {
-    "grafana": {
-      "source": "custom",
-      "command": {
-        "path": %q,
-        "args": %s,
-        "env": {
-          "GRAFANA_URL": %q,
-          "GRAFANA_SERVICE_ACCOUNT_TOKEN": %q
-        }
-      }
-    }
-  }
-}`, command, args, publicURL, tokenSentinel)
+	root := zedRootJSON{}
+	root.ContextServers.Grafana.Source = "custom"
+	root.ContextServers.Grafana.Command = zedCommandJSON{
+		Path: command,
+		Args: args,
+		Env:  grafanaEnvJSON{URL: publicURL, Token: tokenSentinel},
+	}
+	return marshalPrettyJSON(root)
 }
 
 func codexTOML(publicURL string, mode ...string) string {
 	command, args := launchCommand(mode...)
 	return fmt.Sprintf(`[mcp_servers.grafana]
-command = %q
+command = %s
 args = %s
 
 [mcp_servers.grafana.env]
-GRAFANA_URL = %q
-GRAFANA_SERVICE_ACCOUNT_TOKEN = %q`, command, args, publicURL, tokenSentinel)
+GRAFANA_URL = %s
+GRAFANA_SERVICE_ACCOUNT_TOKEN = %s`, jsonString(command), tomlStringArray(args), jsonString(publicURL), jsonString(tokenSentinel))
+}
+
+type grafanaEnvJSON struct {
+	URL   string `json:"GRAFANA_URL"`
+	Token string `json:"GRAFANA_SERVICE_ACCOUNT_TOKEN"`
+}
+
+type stdioServerJSON struct {
+	Type    string         `json:"type,omitempty"`
+	Command string         `json:"command"`
+	Args    []string       `json:"args"`
+	Env     grafanaEnvJSON `json:"env"`
+}
+
+type mcpServersRootJSON struct {
+	MCPServers map[string]stdioServerJSON `json:"mcpServers,omitempty"`
+	Servers    map[string]stdioServerJSON `json:"servers,omitempty"`
+}
+
+type zedCommandJSON struct {
+	Path string         `json:"path"`
+	Args []string       `json:"args"`
+	Env  grafanaEnvJSON `json:"env"`
+}
+
+type zedRootJSON struct {
+	ContextServers struct {
+		Grafana struct {
+			Source  string         `json:"source"`
+			Command zedCommandJSON `json:"command"`
+		} `json:"grafana"`
+	} `json:"context_servers"`
+}
+
+func marshalPrettyJSON(value any) string {
+	encoded, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		panic(fmt.Sprintf("serializing static MCP configuration: %v", err))
+	}
+	return string(encoded)
+}
+
+func jsonString(value string) string {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		panic(fmt.Sprintf("serializing static MCP string: %v", err))
+	}
+	return string(encoded)
+}
+
+func tomlStringArray(values []string) string {
+	quoted := make([]string, len(values))
+	for i, value := range values {
+		quoted[i] = jsonString(value)
+	}
+	return "[" + strings.Join(quoted, ", ") + "]"
 }

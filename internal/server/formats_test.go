@@ -70,3 +70,49 @@ func TestEveryClientHasThreeMaskedLaunchModes(t *testing.T) {
 		}
 	}
 }
+
+func TestJSONFormatsRoundTripHostileURL(t *testing.T) {
+	publicURL := "https://grafana.example.test/a\"b\\c\n\t\x01"
+
+	for _, key := range []string{"mcpServers", "servers"} {
+		t.Run(key, func(t *testing.T) {
+			var config mcpServersRootJSON
+			raw := mcpServersJSON(key, publicURL, key == "servers")
+			if err := json.Unmarshal([]byte(raw), &config); err != nil {
+				t.Fatal(err)
+			}
+			servers := config.MCPServers
+			if key == "servers" {
+				servers = config.Servers
+			}
+			if got := servers["grafana"].Env.URL; got != publicURL {
+				t.Fatalf("URL after JSON round trip = %q; want %q", got, publicURL)
+			}
+		})
+	}
+
+	t.Run("zed", func(t *testing.T) {
+		var config zedRootJSON
+		raw := zedJSON(publicURL)
+		if err := json.Unmarshal([]byte(raw), &config); err != nil {
+			t.Fatal(err)
+		}
+		if got := config.ContextServers.Grafana.Command.Env.URL; got != publicURL {
+			t.Fatalf("URL after JSON round trip = %q; want %q", got, publicURL)
+		}
+	})
+}
+
+func TestCodexTOMLPreservesLaunchCommandAndEscapesStrings(t *testing.T) {
+	publicURL := "https://grafana.example.test/a\"b\\c\n"
+	got := codexTOML(publicURL, "docker")
+	for _, want := range []string{
+		`command = "docker"`,
+		`args = ["run", "--rm", "-i", "-e", "GRAFANA_URL", "-e", "GRAFANA_SERVICE_ACCOUNT_TOKEN", "grafana/mcp-grafana:1.4.1", "-t", "stdio", "--disable-write"]`,
+		`GRAFANA_URL = "https://grafana.example.test/a\"b\\c\n"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("Codex TOML does not contain %q:\n%s", want, got)
+		}
+	}
+}

@@ -23,6 +23,9 @@ jobs:
 
       - name: Scan filesystem
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_HELM_VALUES: charts/grafana-mcp-setup/ci/routed-values.yaml
+          TRIVY_HELM_SET: httpRoute.enabled=true,httpRoute.parentRefs[0].name=envoy-gateway,httpRoute.parentRefs[0].namespace=envoy-gateway-system,httpRoute.hostnames[0]=grafana.example.com,securityPolicy.enabled=true,securityPolicy.existingSecret=oidc-client
         with:
           scan-type: fs
           scanners: vuln,secret,misconfig
@@ -31,6 +34,7 @@ jobs:
           output: trivy-filesystem.sarif
           exit-code: '1'
           severity: HIGH,CRITICAL
+          limit-severities-for-sarif: true
 
       - uses: github/codeql-action/upload-sarif@faaca9a8f6edddba5725ffe5adefdab6669a2eca # v3
         if: always()
@@ -61,6 +65,7 @@ jobs:
           exit-code: '1'
           severity: HIGH,CRITICAL
           ignore-unfixed: true
+          limit-severities-for-sarif: true
 
       - uses: github/codeql-action/upload-sarif@faaca9a8f6edddba5725ffe5adefdab6669a2eca # v3
         if: always()
