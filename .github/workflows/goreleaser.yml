@@ -91,6 +91,17 @@ jobs:
         with:
           version: v4.0.0
 
+      - name: Verify release versions
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          VERSION=${TAG#v}
+          CHART_METADATA=$(helm show chart charts/grafana-mcp-setup)
+          CHART_VERSION=$(awk '$1 == "version:" {gsub(/"/, "", $2); print $2}' <<< "$CHART_METADATA")
+          APP_VERSION=$(awk '$1 == "appVersion:" {gsub(/"/, "", $2); print $2}' <<< "$CHART_METADATA")
+          test "$CHART_VERSION" = "$VERSION"
+          test "$APP_VERSION" = "$VERSION"
+
       - name: Login to GitHub Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
