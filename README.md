@@ -97,6 +97,8 @@ from the client's container; `localhost` inside it refers to that container.
 
 ### 1Password Environments
 
+![Environment-based MCP setup with 1Password](images/environment.png)
+
 Choose **1Password / env** for any client and launch mode. Copy the issued token into
 your 1Password Environment as `GRAFANA_SERVICE_ACCOUNT_TOKEN`, then mount that
 Environment at `/Users/example/work/project/.env`. Saving to 1Password is manual.
