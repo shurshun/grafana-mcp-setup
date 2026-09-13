@@ -133,3 +133,18 @@ func TestOriginCanonicalization(t *testing.T) {
 		}
 	}
 }
+
+func TestEnvironmentSetupFlag(t *testing.T) {
+	validEnv(t)
+	for _, value := range []string{"", "false", "true", "invalid"} {
+		t.Setenv("ENABLE_ENV_SETUP", value)
+		cfg, err := FromEnv()
+		if value == "invalid" {
+			if err == nil || !strings.Contains(err.Error(), "ENABLE_ENV_SETUP") {
+				t.Fatal("invalid flag accepted")
+			}
+		} else if err != nil || cfg.EnableEnvSetup != (value == "true") {
+			t.Fatalf("flag %q: %v, %v", value, cfg.EnableEnvSetup, err)
+		}
+	}
+}

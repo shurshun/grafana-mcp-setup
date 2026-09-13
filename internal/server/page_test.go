@@ -8,9 +8,12 @@ import (
 	"time"
 )
 
-func render(t *testing.T, d pageData) string {
+func render(t *testing.T, d pageData, enableEnv ...bool) string {
 	t.Helper()
 	s := &Server{cfg: Config{PublicURL: "https://grafana.example.com", BasePath: "/setup-mcp"}}
+	if len(enableEnv) > 0 {
+		s.cfg.EnableEnvSetup = enableEnv[0]
+	}
 	w := httptest.NewRecorder()
 	s.render(w, d)
 	if got := w.Header().Get("Cache-Control"); got != "no-store" {
@@ -119,8 +122,8 @@ func TestEveryClientSnippetCarriesTheMask(t *testing.T) {
 		TTLDays: 90,
 	})
 
-	if n := strings.Count(body, `<span class="tok">`); n != 19 {
-		t.Errorf("%d masked tokens, want 18 launch modes and the 1Password token", n)
+	if n := strings.Count(body, `<span class="tok">`); n != 18 {
+		t.Errorf("%d masked tokens, want 18 standard launch modes", n)
 	}
 	if strings.Contains(body, tokenSentinel) {
 		t.Error("the placeholder sentinel reached the page")
@@ -244,8 +247,8 @@ func TestFillFromDescribesTheToken(t *testing.T) {
 func snippetsOf(t *testing.T, body string) []string {
 	t.Helper()
 	var out []string
-	for _, part := range strings.Split(body, "<pre>")[1:] {
-		out = append(out, part[:strings.Index(part, "</pre>")])
+	for _, part := range strings.Split(body, "<pre")[1:] {
+		out = append(out, part[strings.Index(part, ">")+1:strings.Index(part, "</pre>")])
 	}
 	if len(out) == 0 {
 		t.Fatal("no snippet on the page")
@@ -309,5 +312,21 @@ func TestAssetsAreServedWithTheirHash(t *testing.T) {
 func TestScriptCarriesNoSecret(t *testing.T) {
 	if strings.Contains(script(t), "glsa_") {
 		t.Error("the module contains a token")
+	}
+}
+
+func TestEnvironmentSetupIsOptIn(t *testing.T) {
+	for _, state := range []string{stateIssued, stateActive} {
+		for _, enabled := range []bool{false, true} {
+			body := render(t, pageData{State: state, Token: "test-secret", TTLDays: 90}, enabled)
+			for _, marker := range []string{"1Password / env", `class="env-guide"`, `data-storage="env"`, "/Users/example/work/project"} {
+				if strings.Contains(body, marker) != enabled {
+					t.Fatalf("state %s enabled %v marker %q mismatch", state, enabled, marker)
+				}
+			}
+			if !strings.Contains(body, "GRAFANA_SERVICE_ACCOUNT_TOKEN") {
+				t.Fatal("standard config missing")
+			}
+		}
 	}
 }

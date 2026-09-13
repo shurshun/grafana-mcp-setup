@@ -83,6 +83,8 @@ spec:
               value: {{ join "," .Values.oidc.requiredGroups | quote }}
             - name: ALLOW_ALL_AUTHENTICATED_USERS
               value: {{ .Values.oidc.allowAllAuthenticatedUsers | quote }}
+            - name: ENABLE_ENV_SETUP
+              value: {{ .Values.enableEnvSetup | quote }}
             - name: ID_TOKEN_HEADER
               value: {{ .Values.oidc.idTokenHeader | quote }}
             - name: ID_TOKEN_SOURCE

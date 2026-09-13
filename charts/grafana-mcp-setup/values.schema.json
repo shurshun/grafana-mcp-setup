@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
+    "enableEnvSetup": {"type": "boolean"},
     "replicaCount": {"type": "integer", "minimum": 1},
     "appPublicURL": {"type": "string", "pattern": "^https?://", "minLength": 8},
     "basePath": {"type": "string", "pattern": "^/"},

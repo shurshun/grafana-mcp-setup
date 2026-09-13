@@ -39,6 +39,7 @@ type Config struct {
 
 	RequiredGroups             []string
 	AllowAllAuthenticatedUsers bool
+	EnableEnvSetup             bool
 
 	TokenTTL       time.Duration
 	FlashCookieKey []byte
@@ -124,6 +125,10 @@ func validHeaderName(name string) bool {
 
 // FromEnv validates runtime settings and loads configured credentials.
 func FromEnv() (Config, error) {
+	enableEnvSetup, err := boolEnv("ENABLE_ENV_SETUP")
+	if err != nil {
+		return Config{}, err
+	}
 	allowAll, err := boolEnv("ALLOW_ALL_AUTHENTICATED_USERS")
 	if err != nil {
 		return Config{}, err
@@ -144,6 +149,7 @@ func FromEnv() (Config, error) {
 		IDTokenCookie:              env("ID_TOKEN_COOKIE", "mcp_id_token"),
 		RequiredGroups:             splitList(os.Getenv("REQUIRED_GROUPS")),
 		AllowAllAuthenticatedUsers: allowAll,
+		EnableEnvSetup:             enableEnvSetup,
 		FlashTTL:                   5 * time.Minute,
 		StartupTimeout:             10 * time.Second,
 		ReadinessTTL:               10 * time.Second,
