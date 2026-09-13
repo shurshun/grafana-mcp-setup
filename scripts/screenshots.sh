@@ -42,15 +42,6 @@ import pathlib, sys
 
 work = pathlib.Path(sys.argv[1])
 
-# The environment variant is the issued page with the second storage mode
-# chosen, so a static capture has to click it on load — before the height is
-# measured, because that mode is a page taller.
-(work / 'environment.html').write_text(
-    (work / 'issued.html').read_text()
-    + '\n<script>addEventListener("load", () => '
-      'document.querySelector(\'[data-storage="env"]\').click());</script>\n'
-)
-
 for page in work.glob('*.html'):
     html = page.read_text()
     # Dark is the palette the README uses, and a headless browser has no system
@@ -93,4 +84,3 @@ mkdir -p "$root/$out"
 shoot landing landing
 shoot issued token
 shoot active status
-shoot environment environment
