@@ -61,6 +61,9 @@ oidc:
 
 tokenTTLDays: 90
 
+# Experimental client setup through direnv. Tokens still enter the MCP process environment.
+enableEnvSetup: false
+
 service:
   type: ClusterIP
   port: 8080

@@ -42,6 +42,7 @@ type pageData struct {
 	StyleURL       string
 	ScriptURL      string
 	PartialCleanup bool
+	EnableEnvSetup bool
 }
 
 // fillFrom describes a token the API still knows about. Everything here is
@@ -216,11 +217,13 @@ var page = template.Must(template.New("page").Funcs(template.FuncMap{
 {{ define "snippet" }}
 <div class="clients" data-format="{{ (index .Formats 0).ID }}"{{ with .Token }} data-token="{{ . }}"{{ end }}>
   <div class="toolbar">
+    {{ if .EnableEnvSetup }}
     <div class="modes" role="radiogroup" aria-label="Token storage">
       <button type="button" class="storage-mode mode on" data-storage="inline" role="radio" aria-checked="true">{{ icon "braces" }}<span>Token in configuration</span></button>
       <button type="button" class="storage-mode mode" data-storage="env" role="radio" aria-checked="false">{{ icon "1password" }}<span>1Password / env</span></button>
     </div>
 
+    {{ end }}
     <div class="tabs" role="tablist" aria-label="Client">
       {{ range $i, $f := .Formats }}
         <button type="button" class="tab{{ if eq $i 0 }} on{{ end }}" data-format="{{ $f.ID }}"
@@ -238,6 +241,7 @@ var page = template.Must(template.New("page").Funcs(template.FuncMap{
       {{ end }}
     </div>
   </div>
+  {{ if .EnableEnvSetup }}
   <div class="env-guide" hidden>
     <ol>
       <li>Save the token as <code>GRAFANA_SERVICE_ACCOUNT_TOKEN</code> in your 1Password Environment.</li>
@@ -256,6 +260,7 @@ var page = template.Must(template.New("page").Funcs(template.FuncMap{
     <p class="note">Saving to 1Password is manual. The env configuration contains no token.
     After rotation, update the Environment and restart the MCP server.</p>
   </div>
+  {{ end }}
   {{ range $i, $f := .Formats }}
     <div class="panel" data-format="{{ $f.ID }}" role="tabpanel"{{ if ne $i 0 }} hidden{{ end }}>
       {{ range $j, $v := $f.Variants }}
@@ -273,7 +278,7 @@ var page = template.Must(template.New("page").Funcs(template.FuncMap{
               </button>
             </div>
             <pre class="storage" data-storage="inline">{{ $v.Body }}</pre>
-            <pre class="storage" data-storage="env" hidden>{{ $v.EnvBody }}</pre>
+            {{ if $.EnableEnvSetup }}<pre class="storage" data-storage="env" hidden>{{ $v.EnvBody }}</pre>{{ end }}
           </div>
           <p class="note">{{ $v.Note }}</p>
         </div>
@@ -290,6 +295,7 @@ var page = template.Must(template.New("page").Funcs(template.FuncMap{
 `))
 
 func (s *Server) render(w http.ResponseWriter, d pageData) {
+	d.EnableEnvSetup = s.cfg.EnableEnvSetup
 	d.PublicURL = s.cfg.PublicURL
 	d.BasePath = s.cfg.BasePath
 	switch d.State {
