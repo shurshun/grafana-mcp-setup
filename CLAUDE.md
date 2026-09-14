@@ -87,6 +87,12 @@ whatever a browser extension declares, and the resulting parse error kills the
 whole block. The one inline rule left is the `<noscript>` block, which is why
 `style-src` still carries a nonce.
 
+`scripts/social-preview.sh` renders `images/social-preview.png` from
+`scripts/social-preview.html` at 1280x640 and 2x, filling every icon placeholder
+from `icons.go` so the card cannot advertise a mark the page no longer uses.
+GitHub does not read that file from the repository; upload it under Settings ->
+Social preview.
+
 `scripts/screenshots.sh` renders the pages with `TestDumpPages`, so the images
 carry the documented example data rather than a live stack's hostnames. It pins
 the dark palette by dropping the `prefers-color-scheme` query, reads each page's

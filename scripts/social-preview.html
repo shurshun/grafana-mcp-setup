@@ -1,0 +1,133 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>grafana-mcp-setup</title>
+<!--
+  The card behind images/social-preview.png, rendered by
+  scripts/social-preview.sh. The script fills every icon placeholder below from
+  internal/server/icons.go, so a mark here cannot drift from the one the page
+  itself shows.
+-->
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    width: 1280px; height: 640px; overflow: hidden;
+    background:
+      radial-gradient(900px 520px at 84% 16%, rgba(217, 119, 87, .16), transparent 62%),
+      radial-gradient(700px 460px at 8% 92%, rgba(68, 130, 248, .12), transparent 60%),
+      #0e1116;
+    color: #e6e9ef;
+    font: 16px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: flex; align-items: center; gap: 48px;
+    padding: 0 60px;
+  }
+
+  .left { width: 560px; flex: none; }
+
+  .logo {
+    width: 68px; height: 68px; border-radius: 19px; margin-bottom: 30px;
+    background: linear-gradient(160deg, #FF8A3D, #F05A22);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 14px 34px rgba(240, 90, 34, .32);
+  }
+
+  /* Monospace because this is a package name, not a wordmark, and on one line
+     because a break mid-name reads as two names. */
+  h1 {
+    font-size: 48px; line-height: 1.1; letter-spacing: -.02em; font-weight: 700;
+    white-space: nowrap;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  .tagline { margin-top: 18px; font-size: 24px; line-height: 1.45; color: #aab3c2; max-width: 500px; }
+  .tagline b { color: #e6e9ef; font-weight: 600; }
+
+  .chips { display: flex; gap: 10px; margin-top: 30px; flex-wrap: wrap; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 9px 15px; border-radius: 999px; font-size: 16px; color: #cdd4df;
+    border: 1px solid #2a313d; background: rgba(255, 255, 255, .03);
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; }
+
+  .repo {
+    margin-top: 34px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 18px; color: #7e8796;
+  }
+
+  /* The right half is the product: the tray of clients and the block it opens. */
+  .shot {
+    flex: 1; border-radius: 16px; overflow: hidden;
+    border: 1px solid #242b36; background: #161a21;
+    box-shadow: 0 30px 70px rgba(0, 0, 0, .5);
+  }
+  .rail { height: 3px; background: #D97757; }
+
+  .tray {
+    display: flex; align-items: center; gap: 10px;
+    padding: 13px 12px; background: #1b2029; border-bottom: 1px solid #242b36;
+  }
+  .seg {
+    display: inline-flex; align-items: center; gap: 9px;
+    padding: 7px 10px; border-radius: 9px; font-size: 15px; color: #97a0af;
+    border: 1px solid transparent;
+  }
+  .seg.on {
+    color: #e6e9ef; background: #161a21; border-color: #343c49;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, .4);
+  }
+  .seg svg { flex: none; }
+
+  .code {
+    background: #0b0e13; padding: 26px 24px 30px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 16px; line-height: 1.75; white-space: pre;
+  }
+  .k { color: #7dd3fc; }
+  .s { color: #b6e08a; }
+  .tok { color: #f0955f; letter-spacing: .04em; }
+</style>
+
+<div class="left">
+  <div class="logo">
+    <svg viewBox="0 0 24 24" width="38" height="38" fill="none">
+      <path d="M3 16.5l5.5-6 4 3.6L21 5.5" stroke="#fff" stroke-width="2.4"
+            stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  </div>
+
+  <h1>grafana-mcp-setup</h1>
+
+  <p class="tagline">Self-service <b>read-only</b> Grafana tokens for MCP clients.
+  People sign in and get their own; <b>no admin in the loop</b>.</p>
+
+  <div class="chips">
+    <span class="chip"><span class="dot" style="background:#3fb950"></span>Viewer role only</span>
+    <span class="chip"><span class="dot" style="background:#d29922"></span>Expires in 90 days</span>
+    <span class="chip"><span class="dot" style="background:#4482F8"></span>OIDC via your proxy</span>
+  </div>
+
+  <div class="repo">github.com/shurshun/grafana-mcp-setup</div>
+</div>
+
+<div class="shot">
+  <div class="rail"></div>
+
+  <div class="tray">
+    <span class="seg on" style="--brand:#D97757">{{icon:Claude}}Claude&nbsp;Code</span>
+    <span class="seg" style="--brand:#B9C0CB">{{icon:Cursor}}Cursor</span>
+    <span class="seg" style="--brand:#4482F8">{{icon:Zed}}Zed</span>
+    <span class="seg" style="--brand:#DE5FE9">{{icon:UV}}uvx</span>
+    <span class="seg" style="--brand:#4CA9F0">{{icon:Docker}}Docker</span>
+  </div>
+
+  <div class="code"><span class="k">"grafana"</span>: {
+  <span class="k">"command"</span>: <span class="s">"mcp-grafana"</span>,
+  <span class="k">"args"</span>: [<span class="s">"-t"</span>, <span class="s">"stdio"</span>, <span class="s">"--disable-write"</span>],
+  <span class="k">"env"</span>: {
+    <span class="k">"GRAFANA_URL"</span>: <span class="s">"https://grafana.example.com"</span>,
+    <span class="k">"GRAFANA_SERVICE_ACCOUNT_TOKEN"</span>: <span class="s">"<span class="tok">********</span>"</span>
+  }
+}</div>
+</div>
