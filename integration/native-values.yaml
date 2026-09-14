@@ -1,0 +1,19 @@
+auth:
+  mode: native
+  session:
+    existingSecret: native-session
+    existingSecretKey: session-cookie-key
+oidc:
+  existingSecret: oidc-client
+  existingSecretKey: client-secret
+  scopes: [openid, groups]
+securityPolicy:
+  enabled: false
+grafana:
+  existingSecret: ""
+  serviceAccountToken:
+    create: true
+    instanceName: integration-grafana
+    name: grafana-mcp-operator-issuer
+    tokenName: issuer
+    secretName: grafana-operator-issuer-token

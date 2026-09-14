@@ -4,10 +4,11 @@ Run one issuer process for each Grafana organization. The local mutex coordinate
 that process only. Do not run a second host, a second unit, or a Kubernetes issuer
 against the same accounts while using this mode.
 
-The host needs systemd 247 or newer for `LoadCredential`, the release binary, and
-an OIDC reverse proxy such as Envoy. systemd does not perform OIDC login. Keep the
-issuer on loopback when the proxy runs on the same host. A remote proxy needs a
-private listener protected by a firewall and TLS.
+The host needs systemd 247 or newer for `LoadCredential`, the release binary,
+and a TLS reverse proxy. In `AUTH_MODE=proxy`, the proxy must also perform OIDC
+login. In `AUTH_MODE=native`, the application performs login. Keep the issuer
+on loopback when the proxy runs on the same host. A remote proxy needs a private
+listener protected by a firewall and TLS.
 
 ## Install
 
@@ -43,6 +44,8 @@ output. For encrypted host credentials, use `LoadCredentialEncrypted` and
 
 ## Proxy contract
 
+This section applies to `AUTH_MODE=proxy`, the default.
+
 The proxy must complete OIDC login, overwrite `X-Grafana-MCP-ID-Token` with the
 verified user's ID token, and protect every route under `/setup-mcp`. The service
 independently verifies signature, issuer, audience, expiry, and allowed groups.
@@ -52,6 +55,27 @@ Register `https://mcp.example.com/setup-mcp/oauth2/callback` with the provider
 when using the supplied Envoy flow. Request `openid`, `profile`, `email`, and
 `groups`. Use `SameSite=Lax` for the proxy's OIDC cookies. Public TLS terminates
 at the proxy; `APP_PUBLIC_URL` must still use the public HTTPS URL.
+
+## Native OIDC
+
+Set `AUTH_MODE=native` in `config.env`. Provision a separate random base64
+32-byte session key and the OIDC client secret as root-owned `0600` files.
+Add this systemd drop-in using `systemctl edit grafana-mcp-setup`.
+
+```ini
+[Service]
+LoadCredential=oidc-client-secret:/etc/grafana-mcp-setup/oidc-client-secret
+LoadCredential=session-cookie-key:/etc/grafana-mcp-setup/session-cookie-key
+Environment=OIDC_CLIENT_SECRET_FILE=%d/oidc-client-secret
+Environment=SESSION_COOKIE_KEY_FILE=%d/session-cookie-key
+```
+
+Register `https://mcp.example.com/setup-mcp/oauth2/callback` at the provider and
+route `/setup-mcp` and all its subpaths through the TLS proxy. The proxy does
+not need an OAuth module. Native mode ignores forwarded identity headers.
+Restart the unit after provisioning credentials. The existing allowed-group
+rules still apply. Sessions expire at the earlier of `SESSION_TTL_SECONDS`
+(default 3600) and the ID token expiry; another login is then required.
 
 ## Operations
 

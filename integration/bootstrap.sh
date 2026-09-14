@@ -4,6 +4,8 @@ set -euo pipefail
 namespace=integration
 release=grafana-mcp-setup
 grafana_api_mode=${GRAFANA_API_MODE:-legacy}
+auth_mode=${AUTH_MODE:-proxy}
+chart_values=(--values integration/values.yaml)
 grafana_port_forward_pid=
 app_port_forward_pid=
 tls_dir=
@@ -22,8 +24,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
+if [[ "$(kubectl config current-context)" != kind-* ]]; then
+  echo 'integration bootstrap requires a disposable kind cluster' >&2
+  exit 1
+fi
+
 if [[ "$grafana_api_mode" != legacy && "$grafana_api_mode" != iam ]]; then
   echo 'GRAFANA_API_MODE must be legacy or iam' >&2
+  exit 1
+fi
+
+if [[ "$auth_mode" != proxy && "$auth_mode" != native ]]; then
+  echo 'AUTH_MODE must be proxy or native' >&2
   exit 1
 fi
 
@@ -138,10 +150,21 @@ kubectl -n "$namespace" create secret generic flash-cookie \
 kubectl -n "$namespace" create secret generic oidc-client \
   --from-literal=client-secret=integration-client-secret
 
+if [[ "$auth_mode" == native ]]; then
+  helm upgrade --install grafana-operator oci://ghcr.io/grafana/helm-charts/grafana-operator \
+    --version 5.25.0 --namespace grafana-operator-system --create-namespace \
+    --wait --timeout 3m
+  kubectl apply -f integration/operator-grafana.yaml
+  kubectl -n "$namespace" create secret generic native-session \
+    --from-literal=session-cookie-key=AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=
+  chart_values+=(--values integration/native-values.yaml)
+fi
+
 helm upgrade --install "$release" charts/grafana-mcp-setup \
   --namespace "$namespace" \
-  --values integration/values.yaml \
+  "${chart_values[@]}" \
   --set "grafana.apiMode=$grafana_api_mode" \
+  --set "image.tag=${INTEGRATION_IMAGE_TAG:-integration}" \
   --wait \
   --timeout 3m
 
@@ -154,7 +177,13 @@ policy_accepted='any(.status.ancestors[]?.conditions[]?; .type == "Accepted" and
 wait_for_nested_condition httproute keycloak "$route_accepted"
 wait_for_nested_condition httproute grafana "$route_accepted"
 wait_for_nested_condition httproute grafana-mcp-setup "$route_accepted"
-wait_for_nested_condition securitypolicy grafana-mcp-setup "$policy_accepted"
+if [[ "$auth_mode" == proxy ]]; then
+  wait_for_nested_condition securitypolicy grafana-mcp-setup "$policy_accepted"
+else
+  test "$(kubectl -n "$namespace" get securitypolicy -o name | wc -l | tr -d ' ')" = 0
+  kubectl -n "$namespace" get secret grafana-operator-issuer-token -o json |
+    jq -e '(.data.token | length > 0) and any(.metadata.ownerReferences[]?; .kind == "GrafanaServiceAccount")' >/dev/null
+fi
 
 for _ in {1..60}; do
   proxy_service=$(kubectl -n envoy-gateway-system get services \

@@ -90,6 +90,9 @@ jobs:
             exit 1
           fi
 
+      - name: Check authentication modes and Grafana Operator credentials
+        run: bash charts/grafana-mcp-setup/ci/chart-validation.sh
+
       - name: Check replica and lock invariants
         run: |
           if helm template test charts/grafana-mcp-setup \

@@ -7,6 +7,8 @@ const { expect, test } = require('@playwright/test');
 
 const APP_URL = 'https://app.integration/setup-mcp';
 const GRAFANA_API_MODE = process.env.GRAFANA_API_MODE || 'legacy';
+const AUTH_MODE = process.env.AUTH_MODE || 'proxy';
+if (!['proxy', 'native'].includes(AUTH_MODE)) throw new Error('AUTH_MODE must be proxy or native');
 
 async function readmeScreenshot(page, name) {
   const directory = process.env.README_SCREENSHOT_DIR;
@@ -191,13 +193,13 @@ function mutationHeaders(idToken, body, cookie) {
   };
 }
 
-test('Envoy authenticates with OIDC and forwards a verified ID token', async ({ browser }) => {
+test('OIDC login protects issuance, rotation, and revocation', async ({ browser }) => {
   const unauthenticated = await requestThroughGateway('app.integration', '/setup-mcp', {
     tls: true,
     headers: { 'x-grafana-mcp-id-token': 'forged' },
   });
   expect(unauthenticated.status).toBe(302);
-  expect(unauthenticated.headers.location).toContain('keycloak.integration');
+  expect(unauthenticated.headers.location).toContain(AUTH_MODE === 'proxy' ? 'keycloak.integration' : '/setup-mcp/oauth2/login');
 
   const context = await browser.newContext({
     viewport: { width: 1000, height: 800 },
@@ -223,7 +225,7 @@ test('Envoy authenticates with OIDC and forwards a verified ID token', async ({ 
   await expect(page.getByText('allowed@example.com')).toBeVisible();
   await readmeScreenshot(page, 'landing');
 
-  const cookies = await context.cookies('https://app.integration');
+  const cookies = await context.cookies(APP_URL);
   const cookieHeader = cookies.map(({ name, value }) => `${name}=${value}`).join('; ');
   const forwarded = await requestThroughGateway('app.integration', '/setup-mcp', {
     tls: true,
@@ -351,7 +353,7 @@ test('Envoy authenticates with OIDC and forwards a verified ID token', async ({ 
   await context.close();
 });
 
-test('two replicas serialize rotation and share encrypted flash state', async () => {
+test('two replicas serialize rotation and share encrypted flash state', async ({ browser }) => {
   const tokenBody = new URLSearchParams({
     grant_type: 'password',
     client_id: 'grafana-mcp-setup',
@@ -376,6 +378,21 @@ test('two replicas serialize rotation and share encrypted flash state', async ()
   const idToken = JSON.parse(oidc.body).id_token;
   if (typeof idToken !== 'string') throw new Error('test OIDC response omitted the ID token');
 
+  let sessionCookie = '';
+  if (AUTH_MODE === 'native') {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await login(page, 'allowed', 'allowed-password');
+    await expect(page).toHaveURL(APP_URL);
+    sessionCookie = (await context.cookies(APP_URL)).map(({name, value}) => `${name}=${value}`).join('; ');
+    await context.close();
+  }
+  const identityHeaders = {
+    host: 'app.integration',
+    'x-grafana-mcp-id-token': idToken,
+    ...(sessionCookie ? { cookie: sessionCookie } : {}),
+  };
+
   const pods = execFileSync(
     'kubectl',
     [
@@ -392,12 +409,18 @@ test('two replicas serialize rotation and share encrypted flash state', async ()
     forwards.push(await startPortForward(pods[0], 18081));
     forwards.push(await startPortForward(pods[1], 18082));
 
+    if (AUTH_MODE === 'native') {
+      const bypass = await requestLocal(18081, '/setup-mcp', {
+        headers: { host: 'app.integration', 'x-grafana-mcp-id-token': idToken },
+      });
+      expect(bypass.status).toBe(302);
+    }
     const [firstPage, secondPage] = await Promise.all([
       requestLocal(18081, '/setup-mcp', {
-        headers: { host: 'app.integration', 'x-grafana-mcp-id-token': idToken },
+        headers: identityHeaders,
       }),
       requestLocal(18082, '/setup-mcp', {
-        headers: { host: 'app.integration', 'x-grafana-mcp-id-token': idToken },
+        headers: identityHeaders,
       }),
     ]);
     expect(firstPage.status).toBe(200);
@@ -409,7 +432,7 @@ test('two replicas serialize rotation and share encrypted flash state', async ()
       const body = new URLSearchParams({ csrf_token: csrf }).toString();
       return requestLocal(port, '/setup-mcp/token', {
         method: 'POST',
-        headers: mutationHeaders(idToken, body),
+        headers: mutationHeaders(idToken, body, sessionCookie),
         body,
       }).then((response) => ({ response, port }));
     };
@@ -426,7 +449,7 @@ test('two replicas serialize rotation and share encrypted flash state', async ()
         headers: {
           host: 'app.integration',
           'x-grafana-mcp-id-token': idToken,
-          cookie: flashCookie.split(';', 1)[0],
+          cookie: [sessionCookie, flashCookie.split(';', 1)[0]].filter(Boolean).join('; '),
         },
       });
       expect(shown.status).toBe(200);
@@ -445,14 +468,14 @@ test('two replicas serialize rotation and share encrypted flash state', async ()
     expect(await listServiceAccountTokens(account)).toHaveLength(1);
 
     const active = await requestLocal(showPort, '/setup-mcp', {
-      headers: { host: 'app.integration', 'x-grafana-mcp-id-token': idToken },
+      headers: identityHeaders,
     });
     expect(active.status).toBe(200);
     const csrf = attribute(active.body, /name="csrf_token" value="([^"]+)"/, 'CSRF token');
     const revokeBody = new URLSearchParams({ csrf_token: csrf }).toString();
     const revoked = await requestLocal(showPort, '/setup-mcp/revoke', {
       method: 'POST',
-      headers: mutationHeaders(idToken, revokeBody),
+      headers: mutationHeaders(idToken, revokeBody, sessionCookie),
       body: revokeBody,
     });
     expect(revoked.status).toBe(303);
@@ -470,10 +493,57 @@ test('application denies a valid identity outside the required group', async ({ 
   await page.locator('#username').fill('denied');
   await page.locator('#password').fill('denied-password');
   const responsePromise = page.waitForResponse(
-    (response) => response.url() === APP_URL && response.status() === 403,
+    (response) => response.url().startsWith(APP_URL) && response.status() === 403,
   );
   await page.locator('#kc-login').click();
   const response = await responsePromise;
   expect(response.status()).toBe(403);
+  await context.close();
+});
+
+test('native login uses PKCE and logout requires CSRF', async ({ browser }) => {
+  test.skip(AUTH_MODE !== 'native');
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await page.goto(APP_URL);
+  const authorize = new URL(page.url());
+  expect(authorize.hostname).toBe('keycloak.integration');
+  expect(authorize.searchParams.get('response_type')).toBe('code');
+  expect(authorize.searchParams.get('code_challenge_method')).toBe('S256');
+  expect(authorize.searchParams.get('code_challenge')).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  expect(authorize.searchParams.get('state')).toBeTruthy();
+  expect(authorize.searchParams.get('nonce')).toBeTruthy();
+  expect(authorize.searchParams.get('redirect_uri')).toBe(`${APP_URL}/oauth2/callback`);
+  await page.locator('#username').fill('allowed');
+  await page.locator('#password').fill('allowed-password');
+  await page.locator('#kc-login').click();
+  await expect(page).toHaveURL(APP_URL);
+
+  const cookies = await context.cookies(APP_URL);
+  const session = cookies.find(({ name }) => name === 'grafana_mcp_session');
+  if (!session) throw new Error('native login omitted the session cookie');
+  expect(session.httpOnly).toBe(true);
+  expect(session.secure).toBe(true);
+  expect(session.sameSite).toBe('Lax');
+  expect(session.path).toBe('/setup-mcp');
+  const cookie = cookies.map(({ name, value }) => `${name}=${value}`).join('; ');
+  const rejected = await requestThroughGateway('app.integration', '/setup-mcp/oauth2/logout', {
+    tls: true,
+    method: 'POST',
+    headers: { ...mutationHeaders('ignored', '', cookie) },
+  });
+  expect(rejected.status).toBe(403);
+  await expect(page.getByRole('button', { name: /sign out/i })).toBeVisible();
+  const csrf = await page.locator('input[name="csrf_token"]').first().inputValue();
+  const body = new URLSearchParams({ csrf_token: csrf }).toString();
+  const loggedOut = await requestThroughGateway('app.integration', '/setup-mcp/oauth2/logout', {
+    tls: true,
+    method: 'POST',
+    headers: mutationHeaders('ignored', body, cookie),
+    body,
+  });
+  expect(loggedOut.status).toBe(303);
+  const deleted = loggedOut.headers['set-cookie'] || [];
+  expect(deleted.some((value) => value.startsWith('grafana_mcp_session=') && /Max-Age=0/.test(value))).toBe(true);
   await context.close();
 });
