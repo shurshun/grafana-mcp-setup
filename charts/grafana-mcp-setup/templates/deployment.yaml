@@ -4,6 +4,21 @@
 {{- if and (eq .Values.rotationLock.mode "local") (gt (int .Values.replicaCount) 1) }}
 {{- fail "replicaCount > 1 requires rotationLock.mode=kubernetes" }}
 {{- end }}
+{{- if and (eq .Values.auth.mode "native") .Values.securityPolicy.enabled }}
+{{- fail "securityPolicy.enabled cannot be used with auth.mode=native" }}
+{{- end }}
+{{- if and (eq .Values.auth.mode "native") (not (hasPrefix "https://" .Values.appPublicURL)) }}
+{{- fail "appPublicURL must use https with auth.mode=native" }}
+{{- end }}
+{{- if and .Values.grafana.serviceAccountToken.create (or .Values.grafana.adminToken .Values.grafana.existingSecret) }}
+{{- fail "grafana.serviceAccountToken.create cannot be combined with grafana.adminToken or grafana.existingSecret" }}
+{{- end }}
+{{- if and (eq .Values.auth.mode "native") .Values.oidc.existingSecret .Values.oidc.clientSecret }}
+{{- fail "use oidc.existingSecret or oidc.clientSecret, not both in native mode" }}
+{{- end }}
+{{- if and (eq .Values.auth.mode "native") .Values.auth.session.existingSecret .Values.auth.session.key }}
+{{- fail "use auth.session.existingSecret or auth.session.key, not both in native mode" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -70,6 +85,8 @@ spec:
               value: {{ .Values.grafana.publicURL | quote }}
             - name: APP_PUBLIC_URL
               value: {{ .Values.appPublicURL | quote }}
+            - name: AUTH_MODE
+              value: {{ .Values.auth.mode | quote }}
             - name: FLASH_COOKIE_KEY
               valueFrom:
                 secretKeyRef:
@@ -91,13 +108,29 @@ spec:
               value: {{ .Values.oidc.idTokenSource | quote }}
             - name: ID_TOKEN_COOKIE
               value: {{ .Values.oidc.idTokenCookie | quote }}
+            {{- if eq .Values.auth.mode "native" }}
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "grafana-mcp-setup.nativeClientSecretName" . }}
+                  key: {{ .Values.oidc.existingSecretKey }}
+            - name: OIDC_SCOPES
+              value: {{ join " " .Values.oidc.scopes | quote }}
+            - name: SESSION_COOKIE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "grafana-mcp-setup.sessionSecretName" . }}
+                  key: {{ .Values.auth.session.existingSecretKey }}
+            - name: SESSION_TTL_SECONDS
+              value: {{ .Values.auth.session.ttlSeconds | quote }}
+            {{- end }}
             - name: TOKEN_TTL_DAYS
               value: {{ .Values.tokenTTLDays | quote }}
             - name: GRAFANA_ADMIN_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ include "grafana-mcp-setup.adminTokenSecret" . }}
-                  key: {{ .Values.grafana.existingSecretKey }}
+                  key: {{ include "grafana-mcp-setup.adminTokenSecretKey" . }}
             - name: ROTATION_LOCK_MODE
               value: {{ .Values.rotationLock.mode | quote }}
             {{- if eq .Values.rotationLock.mode "kubernetes" }}

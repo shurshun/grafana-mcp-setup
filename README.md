@@ -13,6 +13,30 @@ admit users who may share this Viewer access.
 
 ## Authentication
 
+Choose `auth.mode` in Helm or `AUTH_MODE` in the binary.
+
+| Mode | Login owner | Application credential |
+|---|---|---|
+| `proxy` (default) | Envoy Gateway or another OIDC proxy | Forwarded ID token, verified by the application |
+| `native` | The application | Encrypted session established through OIDC Authorization Code flow |
+
+Native mode works behind a normal TLS Ingress or HTTPRoute. It uses PKCE S256,
+state and nonce checks, and the same JWT and group validation as proxy mode.
+Register `{appPublicURL}{basePath}/oauth2/callback` with your OIDC provider.
+The application ignores forwarded identity headers and raw-token cookies in
+native mode. Do not enable the Envoy SecurityPolicy for that mode.
+
+Native sessions use a separate persistent encryption key shared by all replicas.
+Their lifetime is bounded by both the configured session TTL and the ID token's
+expiry. Expired sessions require another login; refresh tokens are not stored.
+Signing out clears this application's browser session. It does not end the IdP
+session, revoke copied session cookies, or revoke issued Grafana tokens.
+The signed-out page waits for an explicit sign-in action before starting SSO.
+The encrypted session must fit within a 3800-byte cookie value. Providers that
+emit large ID tokens need a smaller claim set; oversized sessions fail closed.
+
+The proxy flow remains available without changing existing values.
+
 ```text
 Browser → Envoy → OIDC provider
         → Envoy forwards X-Grafana-MCP-ID-Token
@@ -112,6 +136,75 @@ security properties of environment variables.
 
 ## Kubernetes
 
+### Native OIDC
+
+```yaml
+appPublicURL: https://mcp.example.com
+auth:
+  mode: native
+  session:
+    existingSecret: mcp-session
+    existingSecretKey: session-cookie-key
+    ttlSeconds: 3600
+oidc:
+  issuer: https://idp.example.com
+  clientID: grafana-mcp-setup
+  existingSecret: mcp-oidc
+  existingSecretKey: client-secret
+  requiredGroups: [/grafana-mcp]
+grafana:
+  url: http://grafana.observability.svc
+  publicURL: https://grafana.example.com
+  existingSecret: mcp-grafana-admin
+flashCookie:
+  existingSecret: mcp-flash
+ingress:
+  enabled: true
+  className: nginx
+  host: mcp.example.com
+  tls:
+    - secretName: mcp-tls
+      hosts: [mcp.example.com]
+```
+
+Provision the referenced Secrets before installing. The Admin Secret uses
+`admin-token`; the flash Secret uses `flash-cookie-key`. Session and flash keys
+must each be independent base64-encoded random 32-byte keys. Generate each with
+`openssl rand -base64 32`. Inline alternatives are `oidc.clientSecret`,
+`auth.session.key`, `grafana.adminToken`, and `flashCookie.key`.
+
+### Grafana Operator
+
+If Grafana Operator already manages your Grafana instance, the chart can create
+the issuer's Admin service account and ask the operator to issue its token.
+Replace `grafana.existingSecret` or `grafana.adminToken` with this configuration.
+
+```yaml
+grafana:
+  serviceAccountToken:
+    create: true
+    instanceName: my-grafana
+    name: grafana-mcp-setup
+    tokenName: issuer
+    secretName: grafana-mcp-setup-admin
+```
+
+This creates a `GrafanaServiceAccount` resource, not an operator installation.
+The operator and its CRD must already exist. `instanceName` references the
+`Grafana` resource in the release namespace. Grafana, the account resource,
+the generated Secret, and this application must share that namespace.
+The operator writes the credential to the Secret's `token` key; the chart
+connects it automatically. This option works with either authentication mode.
+See the [operator's service-account documentation](https://grafana.github.io/grafana-operator/docs/examples/serviceaccounts/).
+
+The issuer needs the Admin role to manage personal Viewer accounts. Its token
+has no explicit expiry. The operator owns this credential; the application
+continues to manage personal tokens. Restart the application if the operator
+replaces the issuer token. See [migration notes](docs/deployment.md) before
+changing credential ownership in an existing release.
+
+### Envoy OIDC
+
 Set credentials in `values.yaml`. The chart creates the Kubernetes Secrets.
 
 ```yaml
@@ -188,6 +281,11 @@ local locking and requires exactly one issuer process for its Grafana accounts.
 | `APP_PUBLIC_URL` | Required public issuer URL, separate from Grafana |
 | `OIDC_ISSUER` | Required provider issuer |
 | `OIDC_CLIENT_ID` | `grafana-mcp-setup` |
+| `AUTH_MODE` | `proxy` (default) or `native` |
+| `OIDC_CLIENT_SECRET` / `OIDC_CLIENT_SECRET_FILE` | Native client secret; exactly one source |
+| `OIDC_SCOPES` | Native scopes, comma-separated; default `openid,profile,email,groups`; explicit lists are preserved with `openid` added if missing |
+| `SESSION_COOKIE_KEY` / `SESSION_COOKIE_KEY_FILE` | Native session key; exactly one source, base64-encoded 32-byte key |
+| `SESSION_TTL_SECONDS` | Native session lifetime, `1`–`86400`, default `3600`, bounded by ID token expiry |
 | `ID_TOKEN_SOURCE` | `header`; `cookie` for explicit compatibility |
 | `ID_TOKEN_HEADER` | `X-Grafana-MCP-ID-Token` |
 | `ID_TOKEN_COOKIE` | `mcp_id_token` in cookie mode |

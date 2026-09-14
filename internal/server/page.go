@@ -43,6 +43,7 @@ type pageData struct {
 	ScriptURL      string
 	PartialCleanup bool
 	EnableEnvSetup bool
+	NativeAuth     bool
 }
 
 // fillFrom describes a token the API still knows about. Everything here is
@@ -211,7 +212,16 @@ var page = template.Must(template.New("page").Funcs(template.FuncMap{
   </div>
 {{ end }}
 
+  {{ if .NativeAuth }}
+  <footer>
+    <form method="post" action="{{ .BasePath }}/oauth2/logout">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+      <button type="submit" class="ghost">Sign out</button>
+    </form>
+  </footer>
+  {{ else }}
   <footer>Signing out is the proxy's job, usually <code>{{ .BasePath }}/logout</code>.</footer>
+  {{ end }}
 </div>
 
 {{ define "snippet" }}
@@ -296,6 +306,7 @@ var page = template.Must(template.New("page").Funcs(template.FuncMap{
 
 func (s *Server) render(w http.ResponseWriter, d pageData) {
 	d.EnableEnvSetup = s.cfg.EnableEnvSetup
+	d.NativeAuth = s.cfg.AuthMode == "native"
 	d.PublicURL = s.cfg.PublicURL
 	d.BasePath = s.cfg.BasePath
 	switch d.State {

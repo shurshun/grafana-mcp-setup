@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   oidc:
-    name: OIDC and token lifecycle (${{ matrix.api_mode }})
+    name: OIDC and token lifecycle (${{ matrix.api_mode }}, ${{ matrix.auth_mode }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -17,8 +17,12 @@ jobs:
         api_mode:
           - legacy
           - iam
+        auth_mode:
+          - proxy
+          - native
     env:
       GRAFANA_API_MODE: ${{ matrix.api_mode }}
+      AUTH_MODE: ${{ matrix.auth_mode }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -72,7 +76,7 @@ jobs:
         run: npm test
 
       - name: Upload README screenshots
-        if: success() && matrix.api_mode == 'legacy'
+        if: success() && matrix.api_mode == 'legacy' && matrix.auth_mode == 'proxy'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: readme-screenshots

@@ -1,12 +1,14 @@
 package server
 
 import (
+	"bytes"
 	"encoding/base64"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSplitList(t *testing.T) {
@@ -53,6 +55,53 @@ func TestFromEnvDefaultsToLegacyGrafanaAPIAndRejectsUnknownMode(t *testing.T) {
 	t.Setenv("GRAFANA_API_MODE", "auto")
 	if _, err := FromEnv(); err == nil || !strings.Contains(err.Error(), "legacy or iam") {
 		t.Fatalf("unknown Grafana API mode error = %v", err)
+	}
+}
+
+func TestFromEnvNativeAuthLoadsSecretsAndScopes(t *testing.T) {
+	validEnv(t)
+	t.Setenv("AUTH_MODE", "native")
+	t.Setenv("OIDC_CLIENT_SECRET", "client-secret")
+	t.Setenv("SESSION_COOKIE_KEY", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{8}, 32)))
+	t.Setenv("OIDC_SCOPES", "profile groups")
+	t.Setenv("SESSION_TTL_SECONDS", "7200")
+	t.Setenv("ID_TOKEN_SOURCE", "invalid-but-ignored")
+	cfg, err := FromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AuthMode != "native" || cfg.OIDCClientSecret != "client-secret" || cfg.SessionTTL != 2*time.Hour {
+		t.Fatalf("native config = %#v", cfg)
+	}
+	if !slices.Equal(cfg.OIDCScopes, []string{"openid", "profile", "groups"}) {
+		t.Fatalf("OIDC scopes = %v", cfg.OIDCScopes)
+	}
+}
+
+func TestFromEnvNativeAuthRejectsUnsafeSessionTTLAndMissingSecrets(t *testing.T) {
+	validEnv(t)
+	t.Setenv("AUTH_MODE", "native")
+	if _, err := FromEnv(); err == nil || !strings.Contains(err.Error(), "OIDC_CLIENT_SECRET") {
+		t.Fatalf("missing native secret error = %v", err)
+	}
+	t.Setenv("OIDC_CLIENT_SECRET", "client-secret")
+	t.Setenv("SESSION_COOKIE_KEY", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{8}, 32)))
+	for _, value := range []string{"0", "86401", "invalid"} {
+		t.Setenv("SESSION_TTL_SECONDS", value)
+		if _, err := FromEnv(); err == nil || !strings.Contains(err.Error(), "SESSION_TTL_SECONDS") {
+			t.Fatalf("invalid session TTL %q accepted: %v", value, err)
+		}
+	}
+}
+
+func TestFromEnvNativeAuthRequiresHTTPSAppOrigin(t *testing.T) {
+	validEnv(t)
+	t.Setenv("AUTH_MODE", "native")
+	t.Setenv("OIDC_CLIENT_SECRET", "client-secret")
+	t.Setenv("SESSION_COOKIE_KEY", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{8}, 32)))
+	t.Setenv("APP_PUBLIC_URL", "http://app.example")
+	if _, err := FromEnv(); err == nil || !strings.Contains(err.Error(), "https") {
+		t.Fatalf("native HTTP app origin accepted: %v", err)
 	}
 }
 

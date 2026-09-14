@@ -25,8 +25,21 @@ flashCookie:
   # Supply a persistent base64-encoded random 32-byte key.
   key: ""
 
-# Where the service is mounted. The proxy in front of it authenticates this
-# prefix and nothing else, so Grafana's own routes are untouched.
+# proxy keeps the existing Envoy or external-proxy authentication contract.
+# native runs the OIDC authorization-code flow in this application and works
+# behind an ordinary Ingress or HTTPRoute.
+auth:
+  mode: proxy
+  session:
+    existingSecret: ""
+    existingSecretKey: session-cookie-key
+    # Supply a persistent base64-encoded random 32-byte key for native mode.
+    key: ""
+    ttlSeconds: 3600
+
+# Where the service is mounted. Authentication covers this prefix and leaves
+# Grafana's own routes untouched. Proxy mode delegates it to the front proxy;
+# native mode handles the OIDC flow in this application.
 basePath: /setup-mcp
 
 grafana:
@@ -42,16 +55,36 @@ grafana:
   adminToken: ""
   existingSecret: ""
   existingSecretKey: admin-token
+  # This creates a GrafanaServiceAccount through an already-installed Grafana
+  # Operator. It does not install the operator or its CRD.
+  serviceAccountToken:
+    create: false
+    # GrafanaServiceAccount and its Grafana instance must share this namespace
+    # with the Helm release. The operator token Secret contains key `token`.
+    instanceName: ""
+    name: ""
+    tokenName: issuer
+    secretName: ""
 
 oidc:
   issuer: https://idp.example.com
   clientID: grafana-mcp-setup
+  # Native mode uses these values for its client registration. Proxy mode uses
+  # securityPolicy.clientSecret and securityPolicy.scopes instead.
+  clientSecret: ""
+  existingSecret: ""
+  existingSecretKey: client-secret
+  scopes:
+    - openid
+    - profile
+    - email
+    - groups
   # Membership of any of these groups is the authorisation. Several, because an
   # application's roles are usually separate groups rather than nested ones.
   #
   # An empty list requires allowAllAuthenticatedUsers to be explicitly true.
-  # Note that the proxy in front authenticates against the identity provider,
-  # not against Grafana, so Grafana's own group rules do not apply here.
+  # Proxy and native modes both authorize against the identity provider, not
+  # Grafana, so Grafana's own group rules do not apply here.
   requiredGroups: []
   allowAllAuthenticatedUsers: false
   idTokenSource: header
@@ -68,9 +101,8 @@ service:
   type: ClusterIP
   port: 8080
 
-# A plain Ingress. Authentication is not this chart's job: put an
-# authenticating proxy in front, or use the Gateway API route below with an
-# Envoy Gateway SecurityPolicy.
+# A plain Ingress. Proxy mode expects an authenticating proxy in front. Native
+# mode performs OIDC in this application and works with the same route.
 ingress:
   enabled: false
   className: ""
@@ -91,9 +123,10 @@ httpRoute:
   hostnames: []
 
 # Envoy Gateway's OIDC filter, attached to the route above so that only this
-# path asks for a login. Requesting the groups scope is not optional when
-# oidc.requiredGroups is set: without it the provider omits the claim and every
-# request looks like a permissions failure.
+# path asks for a login in proxy mode. Native mode forbids this policy.
+# Requesting the groups scope is not optional when oidc.requiredGroups is set:
+# without it the provider omits the claim and every request looks like a
+# permissions failure.
 securityPolicy:
   enabled: false
   clientSecret: ""

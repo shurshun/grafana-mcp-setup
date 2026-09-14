@@ -39,6 +39,22 @@ experimental IAM feature flags. The legacy run leaves both flags disabled. The
 GitHub workflow runs both modes as a matrix with the same browser and two-pod
 lifecycle suite.
 
+Set `AUTH_MODE=native` for both `integration/bootstrap.sh` and `npm test` to
+exercise application-owned OIDC. The native fixture uses Envoy only for TLS
+routing, without a SecurityPolicy. It also installs Grafana Operator v5.25.0
+in the disposable cluster, registers the test Grafana instance, and enables
+`grafana.serviceAccountToken.create`. The application must become ready using
+the operator-generated Secret before browser tests start.
+
+CI runs all four combinations of `proxy`/`native` and `legacy`/`iam`. Both auth
+modes test real browser login, denied group membership, issuance, rotation,
+revocation, and cross-replica flash cookies. The native replica test obtains
+its session through authorization-code login and proves that an otherwise valid
+forwarded ID token alone cannot authenticate directly to a pod.
+
+Use a fresh disposable cluster for each combination. Set a dedicated
+`KUBECONFIG` when running locally so fixtures cannot target a company cluster.
+
 The browser maps `app.integration`, `keycloak.integration`, and
 `grafana.integration` to the kind NodePort. Cluster workloads resolve the same
 names through Kubernetes service DNS. This keeps issuer and callback URLs

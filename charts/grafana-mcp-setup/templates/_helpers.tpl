@@ -46,9 +46,33 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{- define "grafana-mcp-setup.adminTokenSecret" -}}
+{{- if .Values.grafana.serviceAccountToken.create }}
+{{- include "grafana-mcp-setup.serviceAccountTokenSecretName" . }}
+{{- else }}
 {{- default (printf "%s-grafana" (include "grafana-mcp-setup.fullname" .)) .Values.grafana.existingSecret }}
+{{- end }}
+{{- end }}
+
+{{- define "grafana-mcp-setup.adminTokenSecretKey" -}}
+{{- if .Values.grafana.serviceAccountToken.create -}}token{{- else -}}{{ .Values.grafana.existingSecretKey }}{{- end -}}
+{{- end }}
+
+{{- define "grafana-mcp-setup.serviceAccountTokenName" -}}
+{{- default (include "grafana-mcp-setup.fullname" .) .Values.grafana.serviceAccountToken.name }}
+{{- end }}
+
+{{- define "grafana-mcp-setup.serviceAccountTokenSecretName" -}}
+{{- default (printf "%s-grafana-admin" (include "grafana-mcp-setup.fullname" .)) .Values.grafana.serviceAccountToken.secretName }}
 {{- end }}
 
 {{- define "grafana-mcp-setup.clientSecretName" -}}
 {{- default (printf "%s-oidc" (include "grafana-mcp-setup.fullname" .)) .Values.securityPolicy.existingSecret }}
+{{- end }}
+
+{{- define "grafana-mcp-setup.nativeClientSecretName" -}}
+{{- default (printf "%s-native-oidc" (include "grafana-mcp-setup.fullname" .)) .Values.oidc.existingSecret }}
+{{- end }}
+
+{{- define "grafana-mcp-setup.sessionSecretName" -}}
+{{- default (printf "%s-session" (include "grafana-mcp-setup.fullname" .)) .Values.auth.session.existingSecret }}
 {{- end }}

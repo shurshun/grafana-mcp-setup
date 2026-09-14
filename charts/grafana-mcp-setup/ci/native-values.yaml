@@ -1,0 +1,34 @@
+# Standalone native OIDC fixture. The fake provider is installed by CI before
+# the application, and no Envoy SecurityPolicy is required in this mode.
+image:
+  repository: grafana-mcp-setup
+  tag: ci-test
+  pullPolicy: Never
+
+appPublicURL: https://grafana.example.com
+
+grafana:
+  url: http://grafana.example.svc
+  publicURL: https://grafana.example.com
+  adminToken: ci-not-a-real-token
+
+auth:
+  mode: native
+  session:
+    key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    ttlSeconds: 3600
+
+flashCookie:
+  key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+
+oidc:
+  issuer: http://fake-idp.default.svc
+  clientID: grafana-mcp-setup
+  clientSecret: ci-not-a-real-client-secret
+  requiredGroups:
+    - /grafana-mcp
+
+ingress:
+  enabled: true
+  className: nginx
+  host: grafana.example.com

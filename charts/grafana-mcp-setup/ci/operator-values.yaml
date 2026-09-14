@@ -1,0 +1,24 @@
+# Standalone Grafana Operator fixture. The operator and its CRD are installed
+# separately by the cluster owner; this chart renders only the custom resource.
+image:
+  repository: grafana-mcp-setup
+  tag: ci-test
+  pullPolicy: Never
+
+grafana:
+  url: http://grafana.example.svc
+  publicURL: https://grafana.example.com
+  serviceAccountToken:
+    create: true
+    instanceName: grafana
+    name: grafana-mcp-setup
+    tokenName: issuer
+    secretName: grafana-mcp-setup-admin
+
+flashCookie:
+  key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+
+oidc:
+  issuer: http://fake-idp.default.svc
+  requiredGroups:
+    - /grafana-mcp

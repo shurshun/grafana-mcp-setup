@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"golang.org/x/oauth2"
 )
 
 const maxFlashCookieValue = 3800
@@ -42,6 +43,8 @@ type Server struct {
 	grafana  *grafana
 	verifier *oidc.IDTokenVerifier
 	flash    *flashCodec
+	session  *sessionCodec
+	oauth    *oauth2.Config
 	locker   mutationLocker
 	ready    readinessState
 	metrics  *metrics
@@ -50,6 +53,17 @@ type Server struct {
 
 // New initializes authentication and rotation coordination.
 func New(ctx context.Context, cfg Config) (*Server, error) {
+	if cfg.AuthMode == "native" {
+		if cfg.OIDCClientSecret == "" {
+			return nil, errors.New("OIDC_CLIENT_SECRET is required in native auth mode")
+		}
+		if cfg.SessionTTL <= 0 {
+			cfg.SessionTTL = defaultSessionTTL
+		}
+		if !slices.Contains(cfg.OIDCScopes, "openid") {
+			cfg.OIDCScopes = append([]string{"openid"}, cfg.OIDCScopes...)
+		}
+	}
 	oidcHTTP := &http.Client{Timeout: 10 * time.Second}
 	provider, err := oidc.NewProvider(oidc.ClientContext(ctx, oidcHTTP), cfg.Issuer)
 	if err != nil {
@@ -66,6 +80,21 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 			return nil, err
 		}
 	}
+	var session *sessionCodec
+	var oauthConfig *oauth2.Config
+	if cfg.AuthMode == "native" {
+		session, err = newSessionCodec(cfg.SessionCookieKey, cfg.BasePath)
+		if err != nil {
+			return nil, err
+		}
+		oauthConfig = &oauth2.Config{
+			ClientID:     cfg.ClientID,
+			ClientSecret: cfg.OIDCClientSecret,
+			Endpoint:     provider.Endpoint(),
+			RedirectURL:  cfg.AppOrigin + cfg.BasePath + "/oauth2/callback",
+			Scopes:       append([]string(nil), cfg.OIDCScopes...),
+		}
+	}
 	serverMetrics := newMetrics()
 	return &Server{
 		cfg: cfg,
@@ -75,6 +104,8 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		},
 		verifier: provider.Verifier(&oidc.Config{ClientID: cfg.ClientID}),
 		flash:    flash,
+		session:  session,
+		oauth:    oauthConfig,
 		locker:   locker,
 		metrics:  serverMetrics,
 		oidcHTTP: oidcHTTP,
@@ -92,10 +123,19 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+s.cfg.BasePath+"/token", s.handleIssue)
 	mux.HandleFunc("GET "+s.cfg.BasePath+"/token", s.handleShow)
 	mux.HandleFunc("POST "+s.cfg.BasePath+"/revoke", s.handleRevoke)
+	if s.cfg.AuthMode == "native" {
+		mux.HandleFunc("GET "+s.cfg.BasePath+"/oauth2/login", s.handleOAuthLogin)
+		mux.HandleFunc("GET "+s.cfg.BasePath+"/oauth2/callback", s.handleOAuthCallback)
+		mux.HandleFunc("GET "+s.cfg.BasePath+"/oauth2/logged-out", s.handleOAuthLoggedOut)
+		mux.HandleFunc("POST "+s.cfg.BasePath+"/oauth2/logout", s.handleOAuthLogout)
+	}
 	return s.securityHeaders(s.requestIDs(s.metrics.wrap(mux)))
 }
 
 func (s *Server) identity(r *http.Request) (string, error) {
+	if s.cfg.AuthMode == "native" {
+		return s.nativeIdentity(r)
+	}
 	var raw string
 	if s.cfg.IDTokenSource == "cookie" {
 		c, err := r.Cookie(s.cfg.IDTokenCookie)
@@ -111,18 +151,13 @@ func (s *Server) identity(r *http.Request) (string, error) {
 			return "", &authError{err: errors.New("no ID token header")}
 		}
 	}
-	tok, err := s.verifier.Verify(oidc.ClientContext(r.Context(), s.oidcHTTP), raw)
+	return s.identityFromIDToken(r.Context(), raw, "")
+}
+
+func (s *Server) identityFromIDToken(ctx context.Context, raw, expectedNonce string) (string, error) {
+	_, claims, err := s.verifyIDToken(ctx, raw, expectedNonce)
 	if err != nil {
-		s.recordAuth("oidc_failure")
-		return "", &authError{err: errors.New("ID token verification failed")}
-	}
-	var claims struct {
-		Email  string   `json:"email"`
-		Groups []string `json:"groups"`
-	}
-	if err := tok.Claims(&claims); err != nil {
-		s.recordAuth("oidc_failure")
-		return "", &authError{err: errors.New("ID token claims are invalid")}
+		return "", err
 	}
 	return s.authorise(claims.Email, claims.Groups)
 }
@@ -171,7 +206,7 @@ func (s *Server) pageData(email string) (pageData, error) {
 func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 	email, err := s.identity(r)
 	if err != nil {
-		writeAuthError(w, err)
+		s.writeIdentityError(w, r, err)
 		return
 	}
 	d, err := s.pageData(email)
@@ -257,7 +292,7 @@ func (s *Server) handleIssue(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleShow(w http.ResponseWriter, r *http.Request) {
 	email, err := s.identity(r)
 	if err != nil {
-		writeAuthError(w, err)
+		s.writeIdentityError(w, r, err)
 		return
 	}
 	d, err := s.pageData(email)

@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,7 @@ type Config struct {
 	BasePath     string
 	AppPublicURL string
 	AppOrigin    string
+	AuthMode     string
 
 	GrafanaURL       string
 	GrafanaToken     string
@@ -31,21 +33,25 @@ type Config struct {
 	GrafanaNamespace string
 	PublicURL        string
 
-	Issuer        string
-	ClientID      string
-	IDTokenSource string
-	IDTokenHeader string
-	IDTokenCookie string
+	Issuer           string
+	ClientID         string
+	OIDCClientSecret string
+	OIDCScopes       []string
+	IDTokenSource    string
+	IDTokenHeader    string
+	IDTokenCookie    string
 
 	RequiredGroups             []string
 	AllowAllAuthenticatedUsers bool
 	EnableEnvSetup             bool
 
-	TokenTTL       time.Duration
-	FlashCookieKey []byte
-	FlashTTL       time.Duration
-	StartupTimeout time.Duration
-	ReadinessTTL   time.Duration
+	TokenTTL         time.Duration
+	FlashCookieKey   []byte
+	FlashTTL         time.Duration
+	SessionCookieKey []byte
+	SessionTTL       time.Duration
+	StartupTimeout   time.Duration
+	ReadinessTTL     time.Duration
 
 	RotationLockMode  string
 	RotationLease     string
@@ -66,6 +72,16 @@ func splitList(v string) []string {
 	var out []string
 	for _, part := range strings.Split(v, ",") {
 		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func splitScopes(v string) []string {
+	var out []string
+	for _, part := range strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' || r == '\r' }) {
+		if p := strings.TrimSpace(part); p != "" && !slices.Contains(out, p) {
 			out = append(out, p)
 		}
 	}
@@ -138,12 +154,14 @@ func FromEnv() (Config, error) {
 		Addr:                       env("LISTEN_ADDR", ":8080"),
 		BasePath:                   "/" + strings.Trim(env("BASE_PATH", "/setup-mcp"), "/"),
 		AppPublicURL:               strings.TrimRight(env("APP_PUBLIC_URL", ""), "/"),
+		AuthMode:                   env("AUTH_MODE", "proxy"),
 		GrafanaURL:                 strings.TrimRight(env("GRAFANA_URL", ""), "/"),
 		GrafanaAPIMode:             env("GRAFANA_API_MODE", "legacy"),
 		GrafanaNamespace:           env("GRAFANA_NAMESPACE", "default"),
 		PublicURL:                  strings.TrimRight(env("GRAFANA_PUBLIC_URL", ""), "/"),
 		Issuer:                     strings.TrimRight(env("OIDC_ISSUER", ""), "/"),
 		ClientID:                   env("OIDC_CLIENT_ID", "grafana-mcp-setup"),
+		OIDCScopes:                 splitScopes(env("OIDC_SCOPES", "openid,profile,email,groups")),
 		IDTokenSource:              env("ID_TOKEN_SOURCE", "header"),
 		IDTokenHeader:              env("ID_TOKEN_HEADER", "X-Grafana-MCP-ID-Token"),
 		IDTokenCookie:              env("ID_TOKEN_COOKIE", "mcp_id_token"),
@@ -151,6 +169,7 @@ func FromEnv() (Config, error) {
 		AllowAllAuthenticatedUsers: allowAll,
 		EnableEnvSetup:             enableEnvSetup,
 		FlashTTL:                   5 * time.Minute,
+		SessionTTL:                 defaultSessionTTL,
 		StartupTimeout:             10 * time.Second,
 		ReadinessTTL:               10 * time.Second,
 		RotationLockMode:           env("ROTATION_LOCK_MODE", "local"),
@@ -159,6 +178,12 @@ func FromEnv() (Config, error) {
 		PodName:                    os.Getenv("POD_NAME"),
 		RotationTokenFile:          defaultRotationTokenFile,
 		RotationCAFile:             defaultRotationCAFile,
+	}
+	if c.AuthMode != "proxy" && c.AuthMode != "native" {
+		return c, errors.New("AUTH_MODE must be proxy or native")
+	}
+	if !slices.Contains(c.OIDCScopes, "openid") {
+		c.OIDCScopes = append([]string{"openid"}, c.OIDCScopes...)
 	}
 
 	days, err := strconv.Atoi(env("TOKEN_TTL_DAYS", "90"))
@@ -179,6 +204,25 @@ func FromEnv() (Config, error) {
 	if err != nil || len(c.FlashCookieKey) != 32 {
 		return c, errors.New("FLASH_COOKIE_KEY must be base64 for exactly 32 bytes")
 	}
+	if c.AuthMode == "native" {
+		c.OIDCClientSecret, err = secretEnv("OIDC_CLIENT_SECRET", "OIDC_CLIENT_SECRET_FILE")
+		if err != nil {
+			return c, err
+		}
+		sessionEncoded, err := secretEnv("SESSION_COOKIE_KEY", "SESSION_COOKIE_KEY_FILE")
+		if err != nil {
+			return c, err
+		}
+		c.SessionCookieKey, err = base64.StdEncoding.DecodeString(sessionEncoded)
+		if err != nil || len(c.SessionCookieKey) != 32 {
+			return c, errors.New("SESSION_COOKIE_KEY must be base64 for exactly 32 bytes")
+		}
+		seconds, parseErr := strconv.ParseInt(env("SESSION_TTL_SECONDS", "3600"), 10, 64)
+		if parseErr != nil || seconds <= 0 || seconds > maxSessionTTLSeconds {
+			return c, fmt.Errorf("SESSION_TTL_SECONDS must be an integer from 1 to %d", maxSessionTTLSeconds)
+		}
+		c.SessionTTL = time.Duration(seconds) * time.Second
+	}
 
 	for name, v := range map[string]string{
 		"APP_PUBLIC_URL":     c.AppPublicURL,
@@ -194,17 +238,19 @@ func FromEnv() (Config, error) {
 	if len(c.RequiredGroups) == 0 && !c.AllowAllAuthenticatedUsers {
 		return c, errors.New("REQUIRED_GROUPS must be nonempty unless ALLOW_ALL_AUTHENTICATED_USERS=true")
 	}
-	if c.IDTokenSource != "header" && c.IDTokenSource != "cookie" {
-		return c, errors.New("ID_TOKEN_SOURCE must be header or cookie")
-	}
-	if c.IDTokenSource == "header" && !validHeaderName(c.IDTokenHeader) {
-		return c, errors.New("ID_TOKEN_HEADER must be a valid HTTP header name in header mode")
-	}
-	if c.IDTokenSource == "cookie" && c.IDTokenCookie == "" {
-		return c, errors.New("ID_TOKEN_COOKIE is required in cookie mode")
-	}
-	if c.IDTokenSource == "cookie" && !validHeaderName(c.IDTokenCookie) {
-		return c, errors.New("ID_TOKEN_COOKIE must be a valid cookie name in cookie mode")
+	if c.AuthMode == "proxy" {
+		if c.IDTokenSource != "header" && c.IDTokenSource != "cookie" {
+			return c, errors.New("ID_TOKEN_SOURCE must be header or cookie")
+		}
+		if c.IDTokenSource == "header" && !validHeaderName(c.IDTokenHeader) {
+			return c, errors.New("ID_TOKEN_HEADER must be a valid HTTP header name in header mode")
+		}
+		if c.IDTokenSource == "cookie" && c.IDTokenCookie == "" {
+			return c, errors.New("ID_TOKEN_COOKIE is required in cookie mode")
+		}
+		if c.IDTokenSource == "cookie" && !validHeaderName(c.IDTokenCookie) {
+			return c, errors.New("ID_TOKEN_COOKIE must be a valid cookie name in cookie mode")
+		}
 	}
 	if c.BasePath == "/" || strings.ContainsAny(c.BasePath, "{}?#% \t\r\n") || strings.Contains(c.BasePath, "//") || strings.Contains(c.BasePath, "/../") || strings.HasSuffix(c.BasePath, "/..") {
 		return c, errors.New("BASE_PATH must be a non-root, unescaped URL path")
@@ -225,6 +271,9 @@ func FromEnv() (Config, error) {
 	}
 	c.AppOrigin = appOrigin
 	c.AppPublicURL = c.AppOrigin
+	if c.AuthMode == "native" && !strings.HasPrefix(c.AppOrigin, "https://") {
+		return c, errors.New("APP_PUBLIC_URL must use https in native auth mode")
+	}
 	for name, raw := range map[string]string{"GRAFANA_URL": c.GrafanaURL, "GRAFANA_PUBLIC_URL": c.PublicURL} {
 		u, err := url.Parse(raw)
 		if err != nil || u.Scheme == "" || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {

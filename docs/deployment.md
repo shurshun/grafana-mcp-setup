@@ -6,7 +6,8 @@
 |---|---|
 | Grafana 13.2.1, `legacy` (default) | Existing service-account API; no IAM flags |
 | Grafana 13.2.1, `iam` | Enable `kubernetesServiceAccountsApi` and `kubernetesServiceAccountTokensApi` |
-| Envoy Gateway 1.9 / Envoy 1.39 | Forward the ID token in `X-Grafana-MCP-ID-Token` |
+| Envoy Gateway 1.9 / Envoy 1.39 (`proxy` mode) | Forward the ID token in `X-Grafana-MCP-ID-Token` |
+| TLS ingress or gateway (`native` mode) | Route the base path and its OAuth callback to the application |
 | OIDC provider | Discovery, JWKS, authorization code flow, email and groups claims |
 | Kubernetes | Namespaced coordination/v1 Lease for overlapping issuers |
 | systemd | One issuer process; version 247 or newer for LoadCredential |
@@ -22,6 +23,48 @@ The [IAM OpenAPI snapshot](https://github.com/grafana/grafana/blob/v13.2.1/pkg/t
 defines the resource and token request formats used by the client.
 
 ## Upgrade order
+
+### Authentication mode
+
+Existing releases default to `auth.mode: proxy`. To move to `native`, provision
+the native OIDC client Secret and a separate persistent session key, register
+the exact public callback URL, and disable `securityPolicy.enabled`. Route the
+whole base path to the application. The application owns login and callback
+in native mode and rejects identity supplied through proxy headers or cookies.
+
+Switch modes during a controlled rollout. Old proxy pods and new native pods
+cannot exchange authentication cookies. Drain the old pods or route traffic to
+the new deployment only after readiness passes. Keep the rotation Lease and
+flash key shared while deployments overlap. Users must sign in again.
+
+Native sessions expire at the earlier of `auth.session.ttlSeconds` (default
+3600) and the ID token expiry. Group membership comes from that verified ID
+token and can remain stale until another login. No refresh token is retained.
+Logout clears browser cookies but does not revoke copied cookies or Grafana
+tokens. Rotating the shared session key invalidates all native sessions; roll
+all replicas together to avoid mixed keys.
+
+### Grafana Operator credentials
+
+`grafana.serviceAccountToken.create=true` requires an installed Grafana Operator
+and the `GrafanaServiceAccount` CRD. The chart creates an Admin account resource
+in the release namespace. Its `instanceName` must reference a `Grafana` CR in
+that namespace. The operator creates the configured Secret with key `token`.
+Pods wait for that Secret; readiness then checks access to the selected API.
+
+Use a new account name and Secret when moving from manually provisioned
+credentials. Do not ask the operator to adopt a live manually managed account
+or reuse a Helm-owned Secret. The CRD makes the account name and instance name
+immutable. Renaming them requires a deliberate resource migration. Removing the
+resource can revoke the issuer credential through operator reconciliation;
+check its dependents before disabling creation or uninstalling the chart.
+
+The issuer token has no requested expiry. Grafana token policies may still
+limit it. Monitor its validity and restart issuer pods whenever the operator
+replaces the Secret because credentials are loaded on startup. Personal Viewer
+accounts remain managed by the application and keep their configured token TTL.
+
+### Grafana API and locking
 
 1. Choose `grafana.apiMode: legacy` to keep the existing Grafana API. For `iam`,
    first enable both IAM flags, preserving existing flags, and restart Grafana
@@ -92,7 +135,7 @@ Lease's labels, annotations, finalizers, and owner references when renewing it.
 
 ## Secret updates
 
-Supply Admin, OIDC, and flash-cookie credentials in values, or reference existing
+Supply Admin, OIDC, session, and flash-cookie credentials in values, or reference existing
 Secrets. The chart adds a checksum for chart-managed Secrets. For externally
 managed Secrets, configure your existing restart controller or perform a rolling
 restart after the secret manager updates the resource. The app reads environment

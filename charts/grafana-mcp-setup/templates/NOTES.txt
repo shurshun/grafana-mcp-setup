@@ -6,10 +6,27 @@ Enable Grafana feature flags kubernetesServiceAccountsApi and kubernetesServiceA
 before starting this issuer. The configured namespace is {{ .Values.grafana.namespace }}.
 {{- end }}
 
+Authentication mode is {{ .Values.auth.mode }}.
+{{- if eq .Values.auth.mode "native" }}
+Native mode performs the OIDC login in this application. It can run behind the
+ordinary Ingress or HTTPRoute above; do not enable securityPolicy in this mode.
+{{- end }}
+
+{{- if .Values.grafana.serviceAccountToken.create }}
+This release creates GrafanaServiceAccount {{ include "grafana-mcp-setup.serviceAccountTokenName" . }}.
+Grafana Operator and the grafana.integreatly.org/v1beta1 CRD must already be
+installed. The GrafanaServiceAccount and its token Secret must share the
+Grafana instance namespace with this Helm release. The operator-managed
+resource keeps spec.instanceName and spec.name immutable. Its token omits an
+expiry, so the operator requests a non-expiring issuer token subject to
+Grafana policy. Use the operator's token rotation procedure, then restart
+this Deployment after the credential Secret changes.
+{{- end }}
+
 Before anyone can use it:
 
 1. Grafana needs a service account with the Admin role, and its token in
-   {{ if .Values.grafana.existingSecret }}the secret {{ .Values.grafana.existingSecret }}{{ else }}grafana.adminToken{{ end }}.
+   {{ if .Values.grafana.serviceAccountToken.create }}the operator-managed secret {{ include "grafana-mcp-setup.adminTokenSecret" . }}{{ else if .Values.grafana.existingSecret }}the secret {{ .Values.grafana.existingSecret }}{{ else }}grafana.adminToken{{ end }}.
    Admin is not optional — creating service accounts needs it.
 
 2. The identity provider needs a client {{ .Values.oidc.clientID | quote }} whose
