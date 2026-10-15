@@ -31,7 +31,7 @@ jobs:
       - name: Build application image
         run: docker build -f Dockerfile.local -t grafana-mcp-setup:integration .
 
-      - uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1
+      - uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
         with:
           cluster_name: integration
           config: integration/kind.yaml
@@ -39,7 +39,7 @@ jobs:
       - name: Load application image
         run: kind load docker-image grafana-mcp-setup:integration --name integration
 
-      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: v4.0.0
 
