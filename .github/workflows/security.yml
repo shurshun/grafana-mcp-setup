@@ -36,6 +36,11 @@ jobs:
           severity: HIGH,CRITICAL
           limit-severities-for-sarif: true
 
+      - name: Summarize filesystem scan findings
+        if: failure()
+        run: |
+          jq -r '.runs[].results[] | [.ruleId, (.locations[0].physicalLocation.artifactLocation.uri // "")] | @tsv' trivy-filesystem.sarif
+
       - uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         if: always()
         with:
@@ -66,6 +71,11 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           limit-severities-for-sarif: true
+
+      - name: Summarize image scan findings
+        if: failure()
+        run: |
+          jq -r '.runs[].results[] | [.ruleId, (.locations[0].physicalLocation.artifactLocation.uri // "")] | @tsv' trivy-image.sarif
 
       - uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         if: always()
