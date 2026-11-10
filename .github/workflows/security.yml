@@ -36,6 +36,11 @@ jobs:
           severity: HIGH,CRITICAL
           limit-severities-for-sarif: true
 
+      - name: Summarize filesystem scan findings
+        if: failure()
+        run: |
+          jq -r '.runs[].results[] | [.ruleId, (.locations[0].physicalLocation.artifactLocation.uri // "")] | @tsv' trivy-filesystem.sarif
+
       - uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         if: always()
         with:
@@ -67,6 +72,11 @@ jobs:
           ignore-unfixed: true
           limit-severities-for-sarif: true
 
+      - name: Summarize image scan findings
+        if: failure()
+        run: |
+          jq -r '.runs[].results[] | [.ruleId, (.locations[0].physicalLocation.artifactLocation.uri // "")] | @tsv' trivy-image.sarif
+
       - uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         if: always()
         with:
@@ -82,7 +92,7 @@ jobs:
           persist-credentials: false
       - uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1.1.0
         with:
-          go-version-input: '1.27.2'
+          go-version-input: '1.27.4'
           go-package: ./...
           repo-checkout: false
 
@@ -97,7 +107,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.4'
           cache: false
       - uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         with:
